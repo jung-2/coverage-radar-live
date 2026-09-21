@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>커버리지 레이더</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FAFAF7; --text:#1A1A18; --sub:#6B6A63; --border:#E8E8E8;
+    --stat:#F5F4ED; --block:#FFFFFF; --headerbg:#FFFFFFEE; --pillbg:#F0EFE8; --hover:#F0EFE8;
+    --beat:#1D9E75; --miss:#D64545; --note:#D18F2E; --info:#2F7DD1;
+    --cat-packaging:#8B5CF6; --cat-hbm:#12977F; --cat-cpo:#2F7DD1; --cat-power:#D18F2E;
+    --cat-ai_server:#5C6BC0; --cat-korea:#C0392B; --cat-biotech:#C2478E;
+    --cat-disclosure:#8A8578; --cat-telegram:#2AA8C7; --cat-other:#9C9891;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#15140F; --text:#EDEAE0; --sub:#9C9891; --border:#33322A;
+      --stat:#201F19; --block:#1B1A15; --headerbg:#15140FEE; --pillbg:#221F17; --hover:#26241C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#15140F; --text:#EDEAE0; --sub:#9C9891; --border:#33322A;
+    --stat:#201F19; --block:#1B1A15; --headerbg:#15140FEE; --pillbg:#221F17; --hover:#26241C;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,'Malgun Gothic',sans-serif;font-size:14px;line-height:1.5;}
+  a{color:inherit;}
+  .top{position:sticky;top:0;z-index:10;background:var(--headerbg);backdrop-filter:blur(6px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;gap:10px;}
+  .brand{font-weight:700;font-size:15px;}
+  .live-dot{width:7px;height:7px;border-radius:50%;background:var(--beat);animation:pulse 2s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+  .meta{color:var(--sub);font-size:11px;margin-left:auto;}
+  .wrap{max-width:920px;margin:0 auto;padding:14px 16px 60px;}
+  .g4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;}
+  .stat{background:var(--stat);border-radius:8px;padding:10px 12px;}
+  .st-v{font-size:14px;font-weight:500;}
+  .st-l{font-size:10px;color:var(--sub);margin-top:2px;}
+  .sec{font-size:13px;font-weight:600;border-bottom:1px solid var(--border);padding-bottom:6px;margin:20px 0 10px;}
+  .kw-box{background:var(--block);border:1px solid var(--border);border-radius:8px;padding:10px 12px;}
+  .kw-row{display:flex;gap:6px;margin-bottom:8px;}
+  .kw-row input{flex:1;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:inherit;}
+  .kw-row button{font-size:12px;padding:6px 12px;border:none;border-radius:6px;background:var(--info);color:#fff;cursor:pointer;font-family:inherit;}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{display:flex;align-items:center;gap:5px;background:var(--pillbg);border-radius:14px;padding:4px 10px;font-size:11px;}
+  .chip button{border:none;background:none;color:var(--sub);cursor:pointer;font-size:12px;padding:0;line-height:1;}
+  .rank-item{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;}
+  .rank-item:last-child{border-bottom:none;}
+  .rank-n{color:var(--sub);font-weight:600;min-width:14px;}
+  .cats{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;}
+  .cat-pill{display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:14px;background:var(--pillbg);font-size:11px;cursor:pointer;border:1px solid transparent;}
+  .cat-pill.active{border-color:var(--info);}
+  .dot{width:7px;height:7px;border-radius:50%;}
+  #search-input{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--block);color:var(--text);font-size:12px;font-family:inherit;margin-bottom:10px;}
+  .day-label{font-size:11px;color:var(--sub);font-weight:600;margin:14px 0 6px;}
+  .item{background:var(--block);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:6px;}
+  .item-top{display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap;}
+  .badge{font-size:9px;padding:1px 6px;border-radius:8px;font-weight:600;}
+  .badge.beat{background:var(--beat);color:#fff;}
+  .badge.miss{background:var(--miss);color:#fff;}
+  .badge.note{background:var(--note);color:#fff;}
+  .badge.neutral{background:var(--sub);color:#fff;}
+  .item-title{font-size:13px;font-weight:500;}
+  .item-title a{text-decoration:none;}
+  .item-title a:hover{text-decoration:underline;}
+  .item-src{font-size:10px;color:var(--sub);}
+  .item-sum{font-size:11.5px;color:var(--sub);margin-top:4px;}
+  .empty{color:var(--sub);font-size:12px;padding:20px 0;text-align:center;}
+</style>
+</head>
+<body>
+  <div class="top">
+    <span class="live-dot" id="live-dot"></span>
+    <span class="brand">커버리지 레이더</span>
+    <span class="meta" id="last-updated">연결 중…</span>
+  </div>
+
+  <div class="wrap">
+    <div class="g4">
+      <div class="stat"><div class="st-v" id="stat-today">–</div><div class="st-l">오늘 신규</div></div>
+      <div class="stat"><div class="st-v" id="stat-7d">–</div><div class="st-l">최근 7일</div></div>
+      <div class="stat"><div class="st-v" id="stat-total">–</div><div class="st-l">전체 누적</div></div>
+      <div class="stat"><div class="st-v" id="stat-lastrun">–</div><div class="st-l">마지막 수집</div></div>
+    </div>
+
+    <div class="sec">추적 키워드</div>
+    <div class="kw-box">
+      <div class="kw-row">
+        <input id="kw-input" placeholder="종목명·회사명·테마 추가 (예: SK하이닉스)" />
+        <button id="kw-add-btn">추가</button>
+      </div>
+      <div class="chips" id="kw-list"></div>
+    </div>
+
+    <div class="sec">텔레그램 채널</div>
+    <div class="kw-box">
+      <div class="kw-row">
+        <input id="tg-input" placeholder="공개채널 링크 또는 @handle (예: https://t.me/handle)" />
+        <button id="tg-add-btn">추가</button>
+      </div>
+      <div class="chips" id="tg-list"></div>
+    </div>
+
+    <div class="sec">주목 이슈</div>
+    <div class="kw-box" id="rank-list"><div class="empty">데이터 로딩 중…</div></div>
+
+    <div class="sec">전체 피드</div>
+    <input id="search-input" placeholder="제목·요약 검색…" />
+    <div class="cats" id="cat-pills"></div>
+    <div id="feed"><div class="empty">데이터 로딩 중…</div></div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// ── 여기 두 값을 Supabase 프로젝트 정보로 채우세요 (Settings > API) ──
+const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+const SUPABASE_ANON_KEY = "YOUR_ANON_PUBLIC_KEY";
+// ─────────────────────────────────────────────────────────────
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const CATS = [
+  ["all","전체","--sub"],
+  ["packaging","패키징","--cat-packaging"],
+  ["hbm","HBM","--cat-hbm"],
+  ["cpo","CPO/광","--cat-cpo"],
+  ["power","전력반도체","--cat-power"],
+  ["ai_server","AI서버","--cat-ai_server"],
+  ["korea","한국주식","--cat-korea"],
+  ["biotech","바이오","--cat-biotech"],
+  ["disclosure","공시","--cat-disclosure"],
+  ["telegram","텔레그램","--cat-telegram"],
+  ["other","기타","--cat-other"],
+];
+
+let allItems = [];
+let activeCat = "all";
+let searchTerm = "";
+
+function extractHandle(v){
+  v = v.trim().replace(/^https?:\/\/t\.me\//i,"").replace(/^@/,"").replace(/^s\//,"");
+  return v.split(/[/?]/)[0];
+}
+
+function timeAgo(iso){
+  const diff = (Date.now() - new Date(iso).getTime())/1000;
+  if (diff < 60) return "방금 전";
+  if (diff < 3600) return `${Math.floor(diff/60)}분 전`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}시간 전`;
+  return `${Math.floor(diff/86400)}일 전`;
+}
+
+function dayLabel(iso){
+  const d = new Date(iso), now = new Date();
+  const sameDay = (a,b)=>a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate();
+  const yest = new Date(now); yest.setDate(now.getDate()-1);
+  if (sameDay(d, now)) return "오늘";
+  if (sameDay(d, yest)) return "어제";
+  return d.toLocaleDateString("ko-KR",{month:"long",day:"numeric"});
+}
+
+async function loadKeywords(){
+  const {data} = await sb.from("keywords").select("term").order("term");
+  renderChips("kw-list", (data||[]).map(r=>r.term), removeKeyword);
+}
+async function loadChannels(){
+  const {data} = await sb.from("telegram_channels").select("handle").order("handle");
+  renderChips("tg-list", (data||[]).map(r=>r.handle), removeChannel);
+}
+function renderChips(elId, list, onRemove){
+  const el = document.getElementById(elId);
+  el.innerHTML = list.length ? "" : `<span class="empty" style="padding:0;">아직 없음</span>`;
+  list.forEach(v=>{
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.innerHTML = `<span>${v}</span>`;
+    const btn = document.createElement("button");
+    btn.textContent = "✕";
+    btn.onclick = ()=>onRemove(v);
+    chip.appendChild(btn);
+    el.appendChild(chip);
+  });
+}
+async function addKeyword(){
+  const input = document.getElementById("kw-input");
+  const v = input.value.trim();
+  if (!v) return;
+  await sb.from("keywords").insert({term:v});
+  input.value = "";
+  loadKeywords();
+}
+async function removeKeyword(term){
+  await sb.from("keywords").delete().eq("term", term);
+  loadKeywords();
+}
+async function addChannel(){
+  const input = document.getElementById("tg-input");
+  const v = extractHandle(input.value);
+  if (!v) return;
+  await sb.from("telegram_channels").insert({handle:v});
+  input.value = "";
+  loadChannels();
+}
+async function removeChannel(handle){
+  await sb.from("telegram_channels").delete().eq("handle", handle);
+  loadChannels();
+}
+
+document.getElementById("kw-add-btn").onclick = addKeyword;
+document.getElementById("tg-add-btn").onclick = addChannel;
+document.getElementById("kw-input").addEventListener("keydown", e=>{if(e.key==="Enter")addKeyword();});
+document.getElementById("tg-input").addEventListener("keydown", e=>{if(e.key==="Enter")addChannel();});
+document.getElementById("search-input").addEventListener("input", e=>{searchTerm = e.target.value.toLowerCase(); renderFeed();});
+
+function renderCatPills(){
+  const el = document.getElementById("cat-pills");
+  el.innerHTML = "";
+  CATS.forEach(([key,label,varName])=>{
+    const pill = document.createElement("div");
+    pill.className = "cat-pill" + (activeCat===key ? " active" : "");
+    pill.innerHTML = key==="all" ? `<span>${label}</span>` : `<span class="dot" style="background:var(${varName})"></span><span>${label}</span>`;
+    pill.onclick = ()=>{ activeCat = key; renderCatPills(); renderFeed(); };
+    el.appendChild(pill);
+  });
+}
+
+function renderStats(statusRow){
+  const now = Date.now();
+  const today = allItems.filter(it => now - new Date(it.published_at).getTime() < 86400000).length;
+  const d7 = allItems.filter(it => now - new Date(it.published_at).getTime() < 7*86400000).length;
+  document.getElementById("stat-today").textContent = today;
+  document.getElementById("stat-7d").textContent = d7;
+  document.getElementById("stat-total").textContent = statusRow?.total_items ?? allItems.length;
+  document.getElementById("stat-lastrun").textContent = statusRow?.last_run_at ? timeAgo(statusRow.last_run_at) : "–";
+  document.getElementById("last-updated").textContent = statusRow?.last_run_at
+    ? `마지막 자동수집 ${timeAgo(statusRow.last_run_at)} · 화면은 실시간 동기화`
+    : "화면은 실시간 동기화";
+}
+
+function renderRank(){
+  const weight = {high:3, medium:2, low:1};
+  const top = [...allItems].sort((a,b)=>{
+    const w = (weight[b.importance]||0) - (weight[a.importance]||0);
+    if (w!==0) return w;
+    return new Date(b.published_at) - new Date(a.published_at);
+  }).slice(0,5);
+  const el = document.getElementById("rank-list");
+  if (!top.length){ el.innerHTML = `<div class="empty">데이터 없음</div>`; return; }
+  el.innerHTML = top.map((it,i)=>`
+    <div class="rank-item">
+      <span class="rank-n">${i+1}</span>
+      <span><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a>
+      <span style="color:var(--sub)"> · ${it.source||""}</span></span>
+    </div>`).join("");
+}
+
+function renderFeed(){
+  let list = allItems;
+  if (activeCat!=="all") list = list.filter(it=>it.category===activeCat);
+  if (searchTerm) list = list.filter(it=>(it.title+it.summary).toLowerCase().includes(searchTerm));
+  const el = document.getElementById("feed");
+  if (!list.length){ el.innerHTML = `<div class="empty">해당하는 항목이 없음</div>`; return; }
+
+  let html = "";
+  let lastLabel = null;
+  for (const it of list){
+    const label = dayLabel(it.published_at);
+    if (label !== lastLabel){ html += `<div class="day-label">${label}</div>`; lastLabel = label; }
+    const catInfo = CATS.find(c=>c[0]===it.category) || CATS[CATS.length-1];
+    html += `
+      <div class="item">
+        <div class="item-top">
+          <span class="dot" style="background:var(${catInfo[2]})"></span>
+          <span class="badge ${it.sentiment}">${it.sentiment}</span>
+          <span class="item-src">${it.source||""} · ${timeAgo(it.published_at)}</span>
+        </div>
+        <div class="item-title"><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a></div>
+        ${it.summary ? `<div class="item-sum">${it.summary}</div>` : ""}
+      </div>`;
+  }
+  el.innerHTML = html;
+}
+
+async function loadItems(){
+  const {data} = await sb.from("items").select("*").order("published_at",{ascending:false}).limit(300);
+  allItems = data || [];
+  renderRank();
+  renderFeed();
+}
+async function loadStatus(){
+  const {data} = await sb.from("status").select("*").eq("id",1).single();
+  renderStats(data);
+  return data;
+}
+
+async function init(){
+  renderCatPills();
+  await Promise.all([loadKeywords(), loadChannels(), loadItems()]);
+  await loadStatus();
+
+  // 실시간 구독 — DB에 새 행이 쓰이는 즉시 화면 반영 (수집 자체는 GitHub Actions가 5분 주기로 폴링)
+  sb.channel("public:items")
+    .on("postgres_changes", {event:"INSERT", schema:"public", table:"items"}, payload=>{
+      allItems = [payload.new, ...allItems.filter(it=>it.id!==payload.new.id)];
+      renderRank(); renderFeed();
+    })
+    .subscribe();
+
+  sb.channel("public:status")
+    .on("postgres_changes", {event:"UPDATE", schema:"public", table:"status"}, payload=>{
+      renderStats(payload.new);
+    })
+    .subscribe();
+
+  sb.channel("public:config")
+    .on("postgres_changes", {event:"*", schema:"public", table:"keywords"}, loadKeywords)
+    .on("postgres_changes", {event:"*", schema:"public", table:"telegram_channels"}, loadChannels)
+    .subscribe();
+
+  setInterval(()=>{ renderFeed(); renderStats(); }, 30000); // "n분 전" 텍스트 갱신용
+}
+init();
+</script>
+</body>
+</html>
