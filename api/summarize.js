@@ -46,6 +46,15 @@
 // 실적(매출/영업이익/EPS, 컨센서스 대비 BEAT/MISS)·목표주가 변화·추정치 변화율·핵심 driver 숫자
 // 순서로 정리하도록 프롬프트로 강제함 — 아래 프롬프트의 "[note 작성 규칙]" 참고.
 //
+// 실제 게시 시각 기준 타임스탬프(2026-09-23 변경): 예전엔 day_key(오늘/어제 구분)·updated_at
+// (카드 대표 시간)·업데이트 이력 시각을 전부 "AI가 브리핑 생성을 처리한 시각"으로 기록했음.
+// 백로그가 밀렸다가 한번에 처리되면 몇 시간 전(또는 전날) 기사도 화면엔 "방금 나온 것"처럼
+// 보이는 문제가 있었음. 지금은 원본 기사/텔레그램의 실제 published_at 기준으로 기록함 —
+// 새 클러스터의 day_key/created_at/updated_at은 그 클러스터를 이룬 기사 중 가장 최근 게시
+// 시각으로, 기존 클러스터 갱신 시 updated_at도 (기존 값, 새로 합쳐진 기사 게시 시각) 중 늦은
+// 쪽으로 기록함. day_key 자체는 클러스터가 처음 생성된 날짜에 고정(나중 업데이트로 안 움직임).
+// 아래 latestPublishedAt/distinctDayKeys 참고.
+//
 // 필요한 Vercel 환경변수(Settings → Environment Variables):
 //   SUPABASE_URL, SUPABASE_SERVICE_KEY  — GitHub Actions 시크릿과 같은 값
 //   ANTHROPIC_API_KEY                   — console.anthropic.com(=platform.claude.com) 에서 발급받은 API 키
@@ -123,6 +132,33 @@ function deriveCategoryFallbackTag(idxList, items) {
   const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
   if (!best) return null;
   return CAT_LABEL[best[0]] || best[0];
+}
+
+// ── 실제 게시 시각 기반 타임스탬프(2026-09-23 추가) ──────────────────
+// 예전엔 클러스터의 day_key(오늘/어제 구분)·updated_at(카드 대표 시간)·업데이트 이력 시각을
+// 전부 "AI가 브리핑 생성을 처리한 시각"으로 기록했음. 그러다 보니 백로그가 밀렸다가 한번에
+// 처리되면, 몇 시간 전(또는 전날) 기사도 화면엔 "방금 나온 것"처럼 보이는 문제가 있었음.
+// items 테이블엔 원본 기사/텔레그램의 실제 published_at이 이미 정확히 들어있으므로,
+// 지금은 이 값을 기준으로 day_key/updated_at/업데이트 이력 시각을 기록함.
+function latestPublishedAt(items, idxList, fallback) {
+  let max = null;
+  for (const i of idxList) {
+    const raw = items[i - 1]?.published_at;
+    if (!raw) continue;
+    const d = new Date(raw);
+    if (!isNaN(d.getTime()) && (!max || d > max)) max = d;
+  }
+  return max || fallback || new Date();
+}
+// 이번 배치에 섞여있는 기사들이 실제로 걸쳐있는 날짜(들) — 백로그가 자정을 넘겨서 처리되면
+// 여러 날짜가 섞여있을 수 있어서, "오늘 진행 중인 클러스터" 조회 범위를 여기서 정함
+function distinctDayKeys(items) {
+  const set = new Set();
+  for (const it of items) {
+    const d = new Date(it.published_at);
+    set.add(!isNaN(d.getTime()) ? kstDayKey(d) : kstDayKey(new Date()));
+  }
+  return Array.from(set);
 }
 
 const UPDATE_TOOL = {
@@ -245,7 +281,6 @@ export default async function handler(req, res) {
     const startCursor = lastRun?.period_to
       ? new Date(lastRun.period_to)
       : new Date(Date.now() - FALLBACK_WINDOW_MS);
-    const dayKey = kstDayKey(new Date());
 
     // 2) 커서 이후로 밀린 게 남아있는 한(시간/횟수 예산 안에서) 150개씩 끊어서 이어서 처리
     let cursor = startCursor;
@@ -262,13 +297,17 @@ export default async function handler(req, res) {
       const { batch: items, noMoreAfterThis } = await fetchNextBatch(sb, cursor.toISOString());
       if (!items.length) { stoppedReason = "caught_up"; break; }
 
-      // 이번 배치 시점 기준으로 "오늘 진행 중인 클러스터" 다시 조회 — 같은 실행 안에서 앞 배치가
+      // 이번 배치에 실제로 섞여있는 기사 날짜(들) — 보통은 하루지만, 백로그가 자정을 넘겨서
+      // 처리되면 여러 날짜가 같이 들어있을 수 있음. 아래 조회들은 전부 이 날짜(들) 기준으로 함.
+      const batchDayKeys = distinctDayKeys(items);
+
+      // 이번 배치 시점 기준으로 "진행 중인 클러스터" 다시 조회 — 같은 실행 안에서 앞 배치가
       // 만들거나 갱신한 클러스터도 다음 배치의 매칭 대상에 포함되어야 하므로 매 배치마다 새로 가져옴.
       // 프롬프트에는 최근 갱신순 MAX_EXISTING_CLUSTERS개까지만 보여줌(토큰 비용 때문).
       const { data: existingClustersRaw, error: exErr } = await sb
         .from("clusters")
         .select("id, headline, impact, targets, why, sources, updates")
-        .eq("day_key", dayKey)
+        .in("day_key", batchDayKeys)
         .order("updated_at", { ascending: false })
         .limit(MAX_EXISTING_CLUSTERS);
       if (exErr) throw exErr;
@@ -432,12 +471,12 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         }
       }
 
-      // (2) 프롬프트 캡(MAX_EXISTING_CLUSTERS)과 무관하게 오늘 하루 전체 클러스터를 대상으로
-      //     다시 검사 — 모델에게 안 보였던 기존 클러스터와 겹치면 새로 만들지 않고 그쪽으로 합침
+      // (2) 프롬프트 캡(MAX_EXISTING_CLUSTERS)과 무관하게 이번 배치 날짜(들)의 클러스터 전체를
+      //     대상으로 다시 검사 — 모델에게 안 보였던 기존 클러스터와 겹치면 새로 만들지 않고 그쪽으로 합침
       const { data: allTodayClustersRaw, error: allErr } = await sb
         .from("clusters")
         .select("id, headline, impact, targets, why, sources, updates")
-        .eq("day_key", dayKey);
+        .in("day_key", batchDayKeys);
       if (allErr) throw allErr;
       const allTodayClusters = allTodayClustersRaw || [];
 
@@ -461,7 +500,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         }
       }
 
-      const batchNowIso = new Date().toISOString();
+      const now = new Date(); // published_at이 없는 예외적인 경우의 최후 fallback으로만 씀
       const toSource = (i) => {
         const it = items[i - 1];
         return { title: it.title, url: it.url, source: it.source, published_at: it.published_at, category: it.category };
@@ -480,8 +519,13 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
           if (fb) mergedTargets = [fb];
         }
         const mergedSources = [...(current.sources || []), ...g.idxList.map(toSource)];
+        // 이번에 새로 합쳐진 기사(들)의 실제 게시 시각 — updated_at/업데이트 이력 시각을 여기서 씀.
+        // day_key(오늘/어제 소속)는 이 클러스터가 처음 생성된 날짜에 그대로 고정 — 안 건드림.
+        const newItemsAt = latestPublishedAt(items, g.idxList, now);
+        const prevUpdatedAt = current.updated_at ? new Date(current.updated_at) : null;
+        const nextUpdatedAt = (prevUpdatedAt && prevUpdatedAt > newItemsAt) ? prevUpdatedAt : newItemsAt;
         const mergedUpdates = [...(current.updates || [])];
-        if (mergedNote) mergedUpdates.push({ at: batchNowIso, note: mergedNote });
+        if (mergedNote) mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote });
 
         const { error: updErr } = await sb
           .from("clusters")
@@ -491,7 +535,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
             why: mergedNote || current.why,
             sources: mergedSources,
             updates: mergedUpdates,
-            updated_at: batchNowIso,
+            updated_at: nextUpdatedAt.toISOString(),
           })
           .eq("id", current.id);
         if (updErr) throw updErr;
@@ -507,16 +551,20 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
             const fb = deriveCategoryFallbackTag(e.idxList, items);
             targets = fb ? [fb] : targets;
           }
+          // day_key/created_at/updated_at 전부 "지금 이 순간"이 아니라 이 클러스터를 이룬
+          // 기사(들) 중 가장 최근 게시 시각 기준으로 기록 — 오늘/어제 분류·카드 시간이 실제 뉴스
+          // 시점을 반영하게 됨(2026-09-23 변경).
+          const createdAt = latestPublishedAt(items, e.idxList, now);
           return {
-            day_key: dayKey,
+            day_key: kstDayKey(createdAt),
             headline: typeof e.headline === "string" && e.headline.trim() ? e.headline.trim() : sources[0].title,
             impact: e.impact,
             targets,
             why: e.note,
             sources,
-            updates: [{ at: batchNowIso, note: e.note || "새로 감지됨" }],
-            created_at: batchNowIso,
-            updated_at: batchNowIso,
+            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨" }],
+            created_at: createdAt.toISOString(),
+            updated_at: createdAt.toISOString(),
           };
         });
         const { error: insErr } = await sb.from("clusters").insert(rows);
