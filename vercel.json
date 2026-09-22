@@ -1,4 +1,7 @@
 {
   "buildCommand": "",
-  "outputDirectory": "web"
+  "outputDirectory": "web",
+  "functions": {
+    "api/summarize.js": { "maxDuration": 300 }
+  }
 }
