@@ -67,13 +67,8 @@
   .brief-status{color:var(--sub);font-size:11px;min-height:14px;margin-bottom:6px;}
   .day-group{margin-top:14px;}
   .day-title{font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;margin-bottom:8px;}
-  .brief-entry{background:var(--stat);border-radius:8px;padding:10px 12px;margin-bottom:8px;}
-  .brief-entry:last-child{margin-bottom:0;}
-  .brief-entry-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
-  .brief-time{font-size:11px;font-weight:700;}
-  .brief-count{font-size:10.5px;color:var(--sub);}
-  .sig-row{padding:7px 0;border-bottom:1px solid var(--border);}
-  .sig-row:last-child{border-bottom:none;}
+  .sig-row{background:var(--stat);border-radius:8px;padding:10px 12px;margin-bottom:8px;}
+  .sig-row:last-child{margin-bottom:0;}
   .sig-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;}
   .sig-badge{font-size:9px;padding:1px 6px;border-radius:8px;font-weight:700;color:#fff;letter-spacing:.02em;}
   .sig-target{font-size:10px;background:var(--pillbg);border-radius:10px;padding:2px 8px;color:var(--text);}
@@ -83,12 +78,32 @@
   .sig-title a:hover{text-decoration:underline;}
   .sig-why{font-size:11.5px;color:var(--sub);margin-top:4px;line-height:1.65;}
   .sig-row-compact .sig-title{font-size:11.5px;font-weight:400;}
-  .sig-low-group{margin-top:8px;}
-  .sig-low-group summary{font-size:10.5px;color:var(--info);cursor:pointer;list-style:none;}
+  .sig-low-group{background:var(--block);border:1px solid var(--border);border-radius:8px;margin-top:2px;}
+  .sig-low-group summary{padding:8px 12px;font-size:11px;color:var(--info);cursor:pointer;list-style:none;}
   .sig-low-group summary::-webkit-details-marker{display:none;}
   .sig-low-group summary::before{content:"▸ ";}
   .sig-low-group[open] summary::before{content:"▾ ";}
-  .sig-low-list{margin-top:4px;}
+  .sig-low-list{padding:0 12px 8px;}
+  .sig-low-list .sig-row{background:transparent;border-bottom:1px solid var(--border);border-radius:0;padding:7px 0;margin-bottom:0;}
+  .sig-low-list .sig-row:last-child{border-bottom:none;}
+  .sig-timeline{margin-top:6px;}
+  .sig-timeline summary{font-size:10.5px;color:var(--info);cursor:pointer;list-style:none;}
+  .sig-timeline summary::-webkit-details-marker{display:none;}
+  .sig-timeline summary::before{content:"▸ ";}
+  .sig-timeline[open] summary::before{content:"▾ ";}
+  .sig-timeline-list{margin-top:5px;display:flex;flex-direction:column;gap:5px;}
+  .sig-timeline-item{font-size:11px;color:var(--sub);line-height:1.5;}
+  .sig-timeline-time{font-weight:700;color:var(--text);margin-right:4px;}
+  .sig-sources{margin-top:6px;}
+  .sig-sources summary{font-size:10.5px;color:var(--info);cursor:pointer;list-style:none;}
+  .sig-sources summary::-webkit-details-marker{display:none;}
+  .sig-sources summary::before{content:"▸ ";}
+  .sig-sources[open] summary::before{content:"▾ ";}
+  .sig-source-list{margin-top:5px;display:flex;flex-direction:column;gap:6px;}
+  .sig-source-item{font-size:11px;}
+  .sig-source-item a{text-decoration:none;}
+  .sig-source-item a:hover{text-decoration:underline;}
+  .sig-source-meta{color:var(--sub);font-size:10px;}
 
   /* 접이식 보조 섹션 */
   .collapse-box{background:var(--block);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;}
@@ -216,6 +231,14 @@ function kstFullLabel(iso){
   const k = toKST(iso);
   return `${k.getUTCMonth()+1}월 ${k.getUTCDate()}일 ${String(k.getUTCHours()).padStart(2,"0")}:${String(k.getUTCMinutes()).padStart(2,"0")} KST`;
 }
+// 클러스터의 day_key('YYYY-MM-DD', KST 기준)와 맞춰 비교하기 위한 자리수 고정 버전
+function kstDayKeyPadded(iso){
+  const k = toKST(iso);
+  const y = k.getUTCFullYear();
+  const m = String(k.getUTCMonth()+1).padStart(2,"0");
+  const d = String(k.getUTCDate()).padStart(2,"0");
+  return `${y}-${m}-${d}`;
+}
 
 function dayLabel(iso){
   const d = new Date(iso), now = new Date();
@@ -273,65 +296,84 @@ async function removeChannel(handle){
   loadChannels();
 }
 
-// ── 브리핑 ──────────────────────────────────────────────
+// ── 브리핑(클러스터) ──────────────────────────────────────
+// "브리핑 생성"을 여러 번 눌러도 같은 주제는 새 카드로 또 쌓이지 않고, 기존 카드가
+// 갱신되면서 그 안에 시간별 업데이트 이력이 쌓이는 구조. 카드 하나 = 클러스터 하나.
 const IMPACT_LABEL = {high:"높음", medium:"중간", low:"낮음"};
 const IMPACT_VAR = {high:"--miss", medium:"--note", low:"--sub"};
 
-function renderSignalRow(s, compact){
-  const targetsHtml = (s.targets||[]).map(t=>`<span class="sig-target">${t}</span>`).join("");
-  return `
-    <div class="sig-row${compact ? " sig-row-compact" : ""}">
-      <div class="sig-top">
-        <span class="sig-badge" style="background:var(${IMPACT_VAR[s.impact]||"--sub"})">${IMPACT_LABEL[s.impact]||"낮음"}</span>
-        ${targetsHtml}
-        <span class="sig-src">${s.source||""} · ${timeAgo(s.published_at)}</span>
-      </div>
-      <div class="sig-title"><a href="${s.url}" target="_blank" rel="noopener">${s.title}</a></div>
-      ${s.why ? `<div class="sig-why">${s.why}</div>` : ""}
-    </div>`;
-}
+function renderClusterCard(c, compact){
+  const targetsHtml = (c.targets||[]).map(t=>`<span class="sig-target">${t}</span>`).join("");
+  const sources = Array.isArray(c.sources) ? c.sources : [];
+  const updates = Array.isArray(c.updates) ? c.updates : [];
 
-function renderBriefingEntry(b){
-  const signals = Array.isArray(b.signals) ? b.signals : [];
-  const order = {high:0, medium:1, low:2};
-  const sorted = [...signals].sort((a,c)=>(order[a.impact]??3)-(order[c.impact]??3));
-  const primary = sorted.filter(s=>s.impact!=="low");
-  const low = sorted.filter(s=>s.impact==="low");
+  const sourcesHtml = sources.length
+    ? `<details class="sig-sources">
+        <summary>출처 ${sources.length}건 보기</summary>
+        <div class="sig-source-list">
+          ${sources.map(s=>`<div class="sig-source-item"><a href="${s.url}" target="_blank" rel="noopener">${s.title}</a><br><span class="sig-source-meta">${s.source||""} · ${timeAgo(s.published_at)}</span></div>`).join("")}
+        </div>
+      </details>`
+    : "";
 
-  const primaryHtml = primary.length
-    ? primary.map(s=>renderSignalRow(s,false)).join("")
-    : `<div class="empty">눈에 띄는 시그널 없음</div>`;
-
-  const lowHtml = low.length
-    ? `<details class="sig-low-group"><summary>낮은 중요도 ${low.length}건 보기</summary>
-        <div class="sig-low-list">${low.map(s=>renderSignalRow(s,true)).join("")}</div>
+  const timelineHtml = updates.length > 1
+    ? `<details class="sig-timeline">
+        <summary>업데이트 이력 ${updates.length}건</summary>
+        <div class="sig-timeline-list">
+          ${updates.slice().reverse().map(u=>`<div class="sig-timeline-item"><span class="sig-timeline-time">${kstTimeLabel(u.at)}</span>${u.note || "새로 감지됨"}</div>`).join("")}
+        </div>
       </details>`
     : "";
 
   return `
-    <div class="brief-entry">
-      <div class="brief-entry-top">
-        <span class="brief-time">${kstTimeLabel(b.created_at)}</span>
-        <span class="brief-count">${b.item_count}건 검토 · 시그널 ${primary.length}건</span>
+    <div class="sig-row${compact ? " sig-row-compact" : ""}">
+      <div class="sig-top">
+        <span class="sig-badge" style="background:var(${IMPACT_VAR[c.impact]||"--sub"})">${IMPACT_LABEL[c.impact]||"낮음"}</span>
+        ${targetsHtml}
+        <span class="sig-src">마지막 업데이트 ${kstTimeLabel(c.updated_at)}</span>
       </div>
-      ${primaryHtml}
-      ${lowHtml}
+      <div class="sig-title">${c.headline}</div>
+      ${c.why ? `<div class="sig-why">${c.why}</div>` : ""}
+      ${timelineHtml}
+      ${sourcesHtml}
     </div>`;
 }
-function renderBriefingGroup(elId, list, emptyMsg){
+
+function renderClusterList(elId, clusters, emptyMsg){
   const el = document.getElementById(elId);
-  el.innerHTML = list.length ? list.map(renderBriefingEntry).join("") : `<div class="empty">${emptyMsg}</div>`;
+  if (!clusters.length){ el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
+
+  const order = {high:0, medium:1, low:2};
+  const sorted = [...clusters].sort((a,c)=>{
+    const byImpact = (order[a.impact]??3)-(order[c.impact]??3);
+    if (byImpact !== 0) return byImpact;
+    return new Date(c.updated_at) - new Date(a.updated_at);
+  });
+  const primary = sorted.filter(c=>c.impact!=="low");
+  const low = sorted.filter(c=>c.impact==="low");
+
+  const primaryHtml = primary.length
+    ? primary.map(c=>renderClusterCard(c,false)).join("")
+    : `<div class="empty">눈에 띄는 시그널 없음</div>`;
+
+  const lowHtml = low.length
+    ? `<details class="sig-low-group"><summary>낮은 중요도 ${low.length}건 보기</summary>
+        <div class="sig-low-list">${low.map(c=>renderClusterCard(c,true)).join("")}</div>
+      </details>`
+    : "";
+
+  el.innerHTML = primaryHtml + lowHtml;
 }
-async function loadBriefings(){
-  const since = new Date(Date.now() - 2*86400000).toISOString(); // 최근 48시간만 조회
-  const {data} = await sb.from("briefings").select("*").gte("created_at", since).order("created_at",{ascending:false});
+
+async function loadClusters(){
+  const todayKey = kstDayKeyPadded(new Date().toISOString());
+  const yestKey = kstDayKeyPadded(new Date(Date.now()-86400000).toISOString());
+  const {data} = await sb.from("clusters").select("*").in("day_key", [todayKey, yestKey]).order("updated_at",{ascending:false});
   const rows = data || [];
-  const todayKey = kstDateKey(new Date().toISOString());
-  const yestKey = kstDateKey(new Date(Date.now()-86400000).toISOString());
-  const today = rows.filter(b=>kstDateKey(b.created_at)===todayKey);
-  const yesterday = rows.filter(b=>kstDateKey(b.created_at)===yestKey);
-  renderBriefingGroup("brief-today", today, `아직 생성된 브리핑 없음 — "브리핑 생성" 눌러서 만들어봐`);
-  renderBriefingGroup("brief-yesterday", yesterday, "기록 없음");
+  const today = rows.filter(c=>c.day_key===todayKey);
+  const yesterday = rows.filter(c=>c.day_key===yestKey);
+  renderClusterList("brief-today", today, `아직 생성된 브리핑 없음 — "브리핑 생성" 눌러서 만들어봐`);
+  renderClusterList("brief-yesterday", yesterday, "기록 없음");
 }
 async function generateBriefing(){
   const btn = document.getElementById("brief-btn");
@@ -350,7 +392,7 @@ async function generateBriefing(){
       return;
     }
     status.textContent = "";
-    await loadBriefings();
+    await loadClusters();
   } catch(e){
     status.textContent = `오류: ${e.message}`;
   } finally {
@@ -420,7 +462,7 @@ async function loadStatus(){
 
 async function init(){
   renderCatPills();
-  await Promise.all([loadKeywords(), loadChannels(), loadItems(), loadBriefings()]);
+  await Promise.all([loadKeywords(), loadChannels(), loadItems(), loadClusters()]);
   await loadStatus();
 
   // 실시간 구독 — DB에 새 행이 쓰이는 즉시 화면 반영 (수집 자체는 GitHub Actions가 5분 주기로 폴링)
@@ -437,8 +479,9 @@ async function init(){
     })
     .subscribe();
 
-  sb.channel("public:briefings")
-    .on("postgres_changes", {event:"INSERT", schema:"public", table:"briefings"}, loadBriefings)
+  sb.channel("public:clusters")
+    .on("postgres_changes", {event:"INSERT", schema:"public", table:"clusters"}, loadClusters)
+    .on("postgres_changes", {event:"UPDATE", schema:"public", table:"clusters"}, loadClusters)
     .subscribe();
 
   sb.channel("public:config")
