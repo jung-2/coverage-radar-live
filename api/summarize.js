@@ -20,9 +20,9 @@
 import { createClient } from "@supabase/supabase-js";
 
 const MODEL = "claude-haiku-4-5-20251001";
-const MAX_ITEMS = 200;              // 한 번에 분류할 최대 신규 항목 수(비용/토큰 제한용)
+const MAX_ITEMS = 150;              // 한 번에 분류할 최대 신규 항목 수(비용/토큰 제한용 + 응답 길이 제한용)
 const MAX_EXISTING_CLUSTERS = 40;   // 프롬프트에 보여줄 "오늘 진행 중인 클러스터" 최대 개수
-const MAX_TOKENS = 8000;            // 항목이 많을 때도 잘리지 않도록 넉넉히
+const MAX_TOKENS = 16000;           // 항목이 많을 때(특히 medium/high 설명이 많을 때)도 안 잘리도록 넉넉히
 const COOLDOWN_MS = 30 * 1000;      // 연타 방지용 최소 간격
 const FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000; // 이전 실행 기록이 없을 때 기본 조회 범위(24시간)
 const IMPACT_RANK = { high: 3, medium: 2, low: 1 };
@@ -211,9 +211,15 @@ ${newLines}
     }
 
     const apiJson = await apiRes.json();
+    if (apiJson.stop_reason === "max_tokens") {
+      throw new Error(
+        `응답이 너무 길어서 중간에 잘림 (처리하려던 항목 ${items.length}건). ` +
+        `MAX_ITEMS를 더 줄이거나 MAX_TOKENS를 더 늘려야 함.`
+      );
+    }
     const toolUse = (apiJson.content || []).find(b => b.type === "tool_use" && b.name === "emit_updates");
     if (!toolUse || !toolUse.input || !Array.isArray(toolUse.input.updates)) {
-      throw new Error("Claude가 구조화된 분류 결과를 반환하지 않음 (형식 오류)");
+      throw new Error(`Claude가 구조화된 분류 결과를 반환하지 않음 (형식 오류, stop_reason: ${apiJson.stop_reason || "알수없음"})`);
     }
 
     // 6) 모델이 반환한 update들을 "기존 클러스터 그룹"과 "신규 클러스터"로 나눠서 모음
