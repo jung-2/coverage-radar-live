@@ -72,16 +72,23 @@
   .brief-entry-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
   .brief-time{font-size:11px;font-weight:700;}
   .brief-count{font-size:10.5px;color:var(--sub);}
-  .brief-text{font-size:12.5px;line-height:1.75;white-space:pre-wrap;}
-  .brief-sources{margin-top:8px;}
-  .brief-sources summary{font-size:10.5px;color:var(--info);cursor:pointer;list-style:none;}
-  .brief-sources summary::-webkit-details-marker{display:none;}
-  .brief-sources summary::before{content:"▸ ";}
-  .brief-sources[open] summary::before{content:"▾ ";}
-  .brief-source-list{margin-top:6px;display:flex;flex-direction:column;gap:4px;padding-left:2px;}
-  .brief-source-list a{font-size:11px;text-decoration:none;}
-  .brief-source-list a:hover{text-decoration:underline;}
-  .brief-source-src{color:var(--sub);}
+  .sig-row{padding:7px 0;border-bottom:1px solid var(--border);}
+  .sig-row:last-child{border-bottom:none;}
+  .sig-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;}
+  .sig-badge{font-size:9px;padding:1px 6px;border-radius:8px;font-weight:700;color:#fff;letter-spacing:.02em;}
+  .sig-target{font-size:10px;background:var(--pillbg);border-radius:10px;padding:2px 8px;color:var(--text);}
+  .sig-src{font-size:10px;color:var(--sub);margin-left:auto;white-space:nowrap;}
+  .sig-title{font-size:12.5px;font-weight:500;}
+  .sig-title a{text-decoration:none;}
+  .sig-title a:hover{text-decoration:underline;}
+  .sig-why{font-size:11.5px;color:var(--sub);margin-top:4px;line-height:1.65;}
+  .sig-row-compact .sig-title{font-size:11.5px;font-weight:400;}
+  .sig-low-group{margin-top:8px;}
+  .sig-low-group summary{font-size:10.5px;color:var(--info);cursor:pointer;list-style:none;}
+  .sig-low-group summary::-webkit-details-marker{display:none;}
+  .sig-low-group summary::before{content:"▸ ";}
+  .sig-low-group[open] summary::before{content:"▾ ";}
+  .sig-low-list{margin-top:4px;}
 
   /* 접이식 보조 섹션 */
   .collapse-box{background:var(--block);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;}
@@ -158,7 +165,7 @@
 // ── 여기 두 값을 Supabase 프로젝트 정보로 채우세요 (Settings > API) ──
 const SUPABASE_URL = "https://jbagbwhdiswsubidzagb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpiYWdid2hkaXN3c3ViaWR6YWdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MjQyNzMsImV4cCI6MjEwNTUwMDI3M30.7OCA42m6KvBSVvAWKzXAtJWf6kNgoxn1QjQvXIiuw5U";
-  // ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -195,7 +202,7 @@ function timeAgo(iso){
 
 // KST(UTC+9) 기준 날짜/시간 — 접속 브라우저 시간대와 무관하게 항상 한국시간 기준으로 계산
 function toKST(iso){
-  return new Date(new Date(iso).getTime() + 9*3600*1000);
+  return new Date(new Date(iso).getTime() + 9*3600*1000); // UTC로 저장된 값을 KST wall-clock으로 이동
 }
 function kstDateKey(iso){
   const k = toKST(iso);
@@ -267,23 +274,48 @@ async function removeChannel(handle){
 }
 
 // ── 브리핑 ──────────────────────────────────────────────
+const IMPACT_LABEL = {high:"높음", medium:"중간", low:"낮음"};
+const IMPACT_VAR = {high:"--miss", medium:"--note", low:"--sub"};
+
+function renderSignalRow(s, compact){
+  const targetsHtml = (s.targets||[]).map(t=>`<span class="sig-target">${t}</span>`).join("");
+  return `
+    <div class="sig-row${compact ? " sig-row-compact" : ""}">
+      <div class="sig-top">
+        <span class="sig-badge" style="background:var(${IMPACT_VAR[s.impact]||"--sub"})">${IMPACT_LABEL[s.impact]||"낮음"}</span>
+        ${targetsHtml}
+        <span class="sig-src">${s.source||""} · ${timeAgo(s.published_at)}</span>
+      </div>
+      <div class="sig-title"><a href="${s.url}" target="_blank" rel="noopener">${s.title}</a></div>
+      ${s.why ? `<div class="sig-why">${s.why}</div>` : ""}
+    </div>`;
+}
+
 function renderBriefingEntry(b){
-  const sources = Array.isArray(b.sources) ? b.sources : [];
-  const sourcesHtml = sources.length
-    ? `<details class="brief-sources"><summary>소스 ${sources.length}건 보기</summary>
-        <div class="brief-source-list">
-          ${sources.map(s=>`<a href="${s.url}" target="_blank" rel="noopener">${s.title}</a><span class="brief-source-src"> · ${s.source||""}</span>`).join("")}
-        </div>
+  const signals = Array.isArray(b.signals) ? b.signals : [];
+  const order = {high:0, medium:1, low:2};
+  const sorted = [...signals].sort((a,c)=>(order[a.impact]??3)-(order[c.impact]??3));
+  const primary = sorted.filter(s=>s.impact!=="low");
+  const low = sorted.filter(s=>s.impact==="low");
+
+  const primaryHtml = primary.length
+    ? primary.map(s=>renderSignalRow(s,false)).join("")
+    : `<div class="empty">눈에 띄는 시그널 없음</div>`;
+
+  const lowHtml = low.length
+    ? `<details class="sig-low-group"><summary>낮은 중요도 ${low.length}건 보기</summary>
+        <div class="sig-low-list">${low.map(s=>renderSignalRow(s,true)).join("")}</div>
       </details>`
     : "";
+
   return `
     <div class="brief-entry">
       <div class="brief-entry-top">
         <span class="brief-time">${kstTimeLabel(b.created_at)}</span>
-        <span class="brief-count">${b.item_count}건 반영</span>
+        <span class="brief-count">${b.item_count}건 검토 · 시그널 ${primary.length}건</span>
       </div>
-      <div class="brief-text">${b.content}</div>
-      ${sourcesHtml}
+      ${primaryHtml}
+      ${lowHtml}
     </div>`;
 }
 function renderBriefingGroup(elId, list, emptyMsg){
@@ -291,7 +323,7 @@ function renderBriefingGroup(elId, list, emptyMsg){
   el.innerHTML = list.length ? list.map(renderBriefingEntry).join("") : `<div class="empty">${emptyMsg}</div>`;
 }
 async function loadBriefings(){
-  const since = new Date(Date.now() - 2*86400000).toISOString();
+  const since = new Date(Date.now() - 2*86400000).toISOString(); // 최근 48시간만 조회
   const {data} = await sb.from("briefings").select("*").gte("created_at", since).order("created_at",{ascending:false});
   const rows = data || [];
   const todayKey = kstDateKey(new Date().toISOString());
@@ -391,6 +423,7 @@ async function init(){
   await Promise.all([loadKeywords(), loadChannels(), loadItems(), loadBriefings()]);
   await loadStatus();
 
+  // 실시간 구독 — DB에 새 행이 쓰이는 즉시 화면 반영 (수집 자체는 GitHub Actions가 5분 주기로 폴링)
   sb.channel("public:items")
     .on("postgres_changes", {event:"INSERT", schema:"public", table:"items"}, payload=>{
       allItems = [payload.new, ...allItems.filter(it=>it.id!==payload.new.id)];
@@ -413,7 +446,7 @@ async function init(){
     .on("postgres_changes", {event:"*", schema:"public", table:"telegram_channels"}, loadChannels)
     .subscribe();
 
-  setInterval(renderFeed, 30000);
+  setInterval(renderFeed, 30000); // "n분 전" 텍스트 갱신용
 }
 init();
 </script>
