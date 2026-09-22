@@ -1,14 +1,21 @@
 // Vercel 서버리스 함수 — 대시보드의 "브리핑 생성" 버튼이 호출하는 엔드포인트.
 // 서비스 키/API 키는 전부 서버사이드 환경변수로만 쓰고, 브라우저에는 절대 노출되지 않음.
 //
+// 방식: 새로 쌓인 기사/텔레그램 항목을 "한 건씩" Claude에게 검토시켜서
+//   - impact(high/medium/low): 특정 종목/산업에 실질적 영향이 있는지
+//   - targets: 관련 종목/산업명
+//   - why: impact가 medium/high일 때만 2~3문장으로 왜 중요한지
+// 를 항목별로 빠짐없이 반환하게 함 (tool-use로 구조화된 JSON 강제).
+//
 // 필요한 Vercel 환경변수(Settings → Environment Variables):
 //   SUPABASE_URL, SUPABASE_SERVICE_KEY  — GitHub Actions 시크릿과 같은 값
-//   ANTHROPIC_API_KEY                   — console.anthropic.com 에서 발급받은 API 키(채팅 구독과 별개)
+//   ANTHROPIC_API_KEY                   — console.anthropic.com(=platform.claude.com) 에서 발급받은 API 키
 
 import { createClient } from "@supabase/supabase-js";
 
 const MODEL = "claude-haiku-4-5-20251001";
-const MAX_ITEMS = 250;          // 프롬프트에 넣을 최대 항목 수(비용/토큰 제한용)
+const MAX_ITEMS = 200;          // 한 번에 분류할 최대 항목 수(비용/토큰 제한용)
+const MAX_TOKENS = 8000;        // 항목이 많을 때도 잘리지 않도록 넉넉히
 const COOLDOWN_MS = 30 * 1000;  // 연타 방지용 최소 간격
 const FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000; // 이전 브리핑이 없을 때 기본 조회 범위(24시간)
 
@@ -16,6 +23,43 @@ const CAT_LABEL = {
   packaging: "패키징", hbm: "HBM", cpo: "CPO/광인터커넥트", power: "전력반도체",
   ai_server: "AI서버", korea: "한국주식", biotech: "바이오", disclosure: "공시",
   telegram: "텔레그램", other: "기타",
+};
+
+const SIGNAL_TOOL = {
+  name: "emit_signals",
+  description:
+    "입력된 헤드라인 목록을 한 건씩 검토해서 분류한 결과를 반환한다. 목록에 있는 모든 항목에 대해 빠짐없이 결과를 반환해야 하며, 절대 건너뛰지 않는다.",
+  input_schema: {
+    type: "object",
+    properties: {
+      signals: {
+        type: "array",
+        description: "입력 헤드라인 목록과 정확히 같은 개수의 판단 결과 배열",
+        items: {
+          type: "object",
+          properties: {
+            index: { type: "integer", description: "입력 헤드라인 목록의 번호 (1부터 시작, 목록에 표시된 번호 그대로)" },
+            impact: {
+              type: "string",
+              enum: ["high", "medium", "low"],
+              description: "이 소식이 특정 종목/산업에 실질적인 영향을 줄 수 있는지. 이미 알려진 내용의 반복, 일반적인 시황 잡담, 영향이 불분명한 내용은 low",
+            },
+            targets: {
+              type: "array",
+              items: { type: "string" },
+              description: "영향받는 구체적인 종목명 또는 산업/테마명 (예: 삼성전자, HBM, 전력반도체). 특정 대상이 없으면 빈 배열",
+            },
+            why: {
+              type: "string",
+              description: "impact가 medium 또는 high일 때만 채움: 왜 중요한지, 어떤 영향이 예상되는지 2~3문장. 순한글로만 작성(한자 금지), 너무 축약하지 말고 바로 이해되게. impact가 low면 빈 문자열",
+            },
+          },
+          required: ["index", "impact", "targets", "why"],
+        },
+      },
+    },
+    required: ["signals"],
+  },
 };
 
 export default async function handler(req, res) {
@@ -74,30 +118,26 @@ export default async function handler(req, res) {
       return;
     }
 
-    // 3) 프롬프트 구성 (원문 전체가 아니라 이미 수집 단계에서 뽑은 제목/메타데이터만 사용)
-    const lines = items.map(it => {
+    // 3) 프롬프트 구성 — 번호를 매겨서 나중에 signals[i].index로 다시 매칭
+    const lines = items.map((it, i) => {
       const cat = CAT_LABEL[it.category] || it.category || "기타";
       const tag = it.ticker ? `[${it.ticker}] ` : "";
-      return `- (${cat}/${it.sentiment}/${it.importance}) ${tag}${it.title} — ${it.source || "출처불명"}`;
+      return `${i + 1}. (${cat}) ${tag}${it.title} — ${it.source || "출처불명"}`;
     }).join("\n");
 
     const prompt = `당신은 반도체·AI인프라 섹터를 커버하는 증권사 애널리스트를 돕는 리서치 어시스턴트입니다.
-아래는 지난 브리핑 이후 새로 수집된 뉴스/공시/텔레그램 헤드라인 목록(${items.length}건, 카테고리/감성/중요도 태그 포함)입니다.
-이걸 바탕으로 애널리스트가 몇 분 안에 훑어볼 수 있는 브리핑을 작성하세요.
+아래는 지난 브리핑 이후 새로 수집된 뉴스/공시/텔레그램 헤드라인 목록(${items.length}건, 번호가 매겨져 있음)입니다.
 
-작성 규칙:
-- 한자 사용 금지, 순한글로만 작성
-- 개별 항목을 그냥 나열하지 말고, 서로 관련된 것끼리 묶어서 맥락이 이해되도록 문장으로 서술
-- 실제로 등장한 카테고리 위주로 소제목을 나눠서 정리하고, 카테고리명을 소제목으로 한 줄에 쓴 뒤 빈 줄 하나 띄우고 본문 작성
-- importance=high 항목과 sentiment가 beat/miss인 항목은 반드시 언급하고 왜 중요한지 코멘트
-- 너무 축약하지 말고, 읽으면 바로 이해될 정도로 충분히 설명(핵심어만 나열 금지)
-- 마크다운 기호(#, *, - 등) 쓰지 말고 순수 텍스트로만 작성
-- 서두에 "다음은 브리핑입니다" 같은 군더더기 없이 바로 본문 시작
+각 항목을 하나씩 검토해서 emit_signals 도구로 판단 결과를 반환하세요. 규칙:
+- 목록의 모든 항목에 대해 빠짐없이 결과를 반환할 것 — 결과 개수가 입력 항목 개수(${items.length}건)와 정확히 같아야 하며, 하나도 건너뛰지 말 것
+- impact는 이 소식이 특정 종목이나 산업에 실질적인 영향을 줄 수 있는지로 판단. 이미 알려진 내용의 반복, 일반적인 시황 잡담, 영향이 불분명한 내용은 low로 분류
+- targets에는 구체적인 종목명이나 산업/테마명을 적을 것. 특정 대상이 없으면 빈 배열
+- why는 impact가 medium 또는 high인 항목에만 2~3문장으로 채울 것 — 왜 중요한지, 어떤 영향이 예상되는지. 순한글로만 작성(한자 금지), 너무 축약하지 말고 읽으면 바로 이해되게. impact가 low면 빈 문자열로 둘 것
 
 헤드라인 목록:
 ${lines}`;
 
-    // 4) Claude API 호출
+    // 4) Claude API 호출 (tool-use로 구조화된 JSON 강제)
     const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -107,7 +147,9 @@ ${lines}`;
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 2000,
+        max_tokens: MAX_TOKENS,
+        tools: [SIGNAL_TOOL],
+        tool_choice: { type: "tool", name: "emit_signals" },
         messages: [{ role: "user", content: prompt }],
       }),
     });
@@ -118,23 +160,43 @@ ${lines}`;
     }
 
     const apiJson = await apiRes.json();
-    const content = (apiJson.content || []).map(b => b.text || "").join("").trim();
+    const toolUse = (apiJson.content || []).find(b => b.type === "tool_use" && b.name === "emit_signals");
+    if (!toolUse || !toolUse.input || !Array.isArray(toolUse.input.signals)) {
+      throw new Error("Claude가 구조화된 분류 결과를 반환하지 않음 (형식 오류)");
+    }
 
-    if (!content) throw new Error("Claude API 응답에 텍스트가 없음");
+    // 5) 모델이 반환한 index를 원본 item과 다시 매칭해서 제목/링크/출처를 합침
+    const signals = toolUse.input.signals
+      .map(s => {
+        const item = items[s.index - 1];
+        if (!item) return null;
+        return {
+          impact: ["high", "medium", "low"].includes(s.impact) ? s.impact : "low",
+          targets: Array.isArray(s.targets) ? s.targets.filter(Boolean) : [],
+          why: typeof s.why === "string" ? s.why.trim() : "",
+          title: item.title,
+          url: item.url,
+          source: item.source,
+          published_at: item.published_at,
+          category: item.category,
+        };
+      })
+      .filter(Boolean);
 
-    // 5) 결과 저장 (소스 목록도 함께 저장 — 대시보드에서 "소스 보기"로 펼쳐볼 수 있게)
-    const sources = items.map(it => ({
-      title: it.title, url: it.url, source: it.source, published_at: it.published_at,
-    }));
+    if (!signals.length) throw new Error("분류 결과를 원본 항목과 매칭하지 못함");
 
+    const highCount = signals.filter(s => s.impact === "high").length;
+    const medCount = signals.filter(s => s.impact === "medium").length;
+
+    // 6) 결과 저장
     const { data: saved, error: saveErr } = await sb
       .from("briefings")
       .insert({
         period_from: periodFrom.toISOString(),
         period_to: periodTo.toISOString(),
         item_count: items.length,
-        content,
-        sources,
+        content: `${items.length}건 검토 · 높음 ${highCount}건, 중간 ${medCount}건`,
+        signals,
       })
       .select()
       .single();
