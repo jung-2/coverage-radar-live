@@ -379,7 +379,7 @@ async function generateBriefing(){
   const btn = document.getElementById("brief-btn");
   const status = document.getElementById("brief-status");
   btn.disabled = true;
-  status.textContent = "새 기사 확인하고 요약하는 중 (몇십 초 걸릴 수 있음)…";
+  status.textContent = "새 기사 확인하고 요약하는 중 (밀린 게 많으면 몇 분 걸릴 수 있음)…";
   try{
     const res = await fetch("/api/summarize", {method:"POST"});
     const json = await res.json();
@@ -391,7 +391,11 @@ async function generateBriefing(){
       status.textContent = json.message;
       return;
     }
-    status.textContent = "";
+    if (json.has_more_backlog){
+      status.textContent = `${json.item_count}건 처리함(배치 ${json.batches_run}개) — 아직 밀린 게 더 있음, "브리핑 생성" 한번 더 눌러서 이어서 처리해줘`;
+    } else {
+      status.textContent = "";
+    }
     await loadClusters();
   } catch(e){
     status.textContent = `오류: ${e.message}`;
