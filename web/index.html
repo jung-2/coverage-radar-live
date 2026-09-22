@@ -35,21 +35,10 @@
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
   .meta{color:var(--sub);font-size:11px;margin-left:auto;}
   .wrap{max-width:920px;margin:0 auto;padding:14px 16px 60px;}
-  .g4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;}
-  .stat{background:var(--stat);border-radius:8px;padding:10px 12px;}
-  .st-v{font-size:14px;font-weight:500;}
-  .st-l{font-size:10px;color:var(--sub);margin-top:2px;}
-  .sec{font-size:13px;font-weight:600;border-bottom:1px solid var(--border);padding-bottom:6px;margin:20px 0 10px;}
-  .kw-box{background:var(--block);border:1px solid var(--border);border-radius:8px;padding:10px 12px;}
-  .kw-row{display:flex;gap:6px;margin-bottom:8px;}
-  .kw-row input{flex:1;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:inherit;}
-  .kw-row button{font-size:12px;padding:6px 12px;border:none;border-radius:6px;background:var(--info);color:#fff;cursor:pointer;font-family:inherit;}
+  .sec{font-size:13px;font-weight:600;margin:0;}
   .chips{display:flex;flex-wrap:wrap;gap:6px;}
   .chip{display:flex;align-items:center;gap:5px;background:var(--pillbg);border-radius:14px;padding:4px 10px;font-size:11px;}
   .chip button{border:none;background:none;color:var(--sub);cursor:pointer;font-size:12px;padding:0;line-height:1;}
-  .rank-item{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;}
-  .rank-item:last-child{border-bottom:none;}
-  .rank-n{color:var(--sub);font-weight:600;min-width:14px;}
   .cats{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;}
   .cat-pill{display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:14px;background:var(--pillbg);font-size:11px;cursor:pointer;border:1px solid transparent;}
   .cat-pill.active{border-color:var(--info);}
@@ -68,7 +57,43 @@
   .item-title a:hover{text-decoration:underline;}
   .item-src{font-size:10px;color:var(--sub);}
   .item-sum{font-size:11.5px;color:var(--sub);margin-top:4px;}
-  .empty{color:var(--sub);font-size:12px;padding:20px 0;text-align:center;}
+  .empty{color:var(--sub);font-size:12px;padding:8px 0;}
+
+  /* 브리핑 히어로 섹션 */
+  .hero{background:var(--block);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px;}
+  .hero-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;}
+  .hero-head button{font-size:12px;padding:7px 14px;border:none;border-radius:6px;background:var(--info);color:#fff;cursor:pointer;font-family:inherit;font-weight:600;}
+  .hero-head button:disabled{opacity:.5;cursor:default;}
+  .brief-status{color:var(--sub);font-size:11px;min-height:14px;margin-bottom:6px;}
+  .day-group{margin-top:14px;}
+  .day-title{font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;margin-bottom:8px;}
+  .brief-entry{background:var(--stat);border-radius:8px;padding:10px 12px;margin-bottom:8px;}
+  .brief-entry:last-child{margin-bottom:0;}
+  .brief-entry-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+  .brief-time{font-size:11px;font-weight:700;}
+  .brief-count{font-size:10.5px;color:var(--sub);}
+  .brief-text{font-size:12.5px;line-height:1.75;white-space:pre-wrap;}
+  .brief-sources{margin-top:8px;}
+  .brief-sources summary{font-size:10.5px;color:var(--info);cursor:pointer;list-style:none;}
+  .brief-sources summary::-webkit-details-marker{display:none;}
+  .brief-sources summary::before{content:"▸ ";}
+  .brief-sources[open] summary::before{content:"▾ ";}
+  .brief-source-list{margin-top:6px;display:flex;flex-direction:column;gap:4px;padding-left:2px;}
+  .brief-source-list a{font-size:11px;text-decoration:none;}
+  .brief-source-list a:hover{text-decoration:underline;}
+  .brief-source-src{color:var(--sub);}
+
+  /* 접이식 보조 섹션 */
+  .collapse-box{background:var(--block);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;}
+  .collapse-box>summary{cursor:pointer;list-style:none;padding:10px 12px;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:6px;}
+  .collapse-box>summary::-webkit-details-marker{display:none;}
+  .collapse-box>summary::before{content:"▸";color:var(--sub);}
+  .collapse-box[open]>summary::before{content:"▾";}
+  .collapse-box[open]>summary{border-bottom:1px solid var(--border);}
+  .collapse-body{padding:12px;}
+  .kw-row{display:flex;gap:6px;margin-bottom:8px;}
+  .kw-row input{flex:1;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:inherit;}
+  .kw-row button{font-size:12px;padding:6px 12px;border:none;border-radius:6px;background:var(--info);color:#fff;cursor:pointer;font-family:inherit;}
 </style>
 </head>
 <body>
@@ -79,45 +104,61 @@
   </div>
 
   <div class="wrap">
-    <div class="g4">
-      <div class="stat"><div class="st-v" id="stat-today">–</div><div class="st-l">오늘 신규</div></div>
-      <div class="stat"><div class="st-v" id="stat-7d">–</div><div class="st-l">최근 7일</div></div>
-      <div class="stat"><div class="st-v" id="stat-total">–</div><div class="st-l">전체 누적</div></div>
-      <div class="stat"><div class="st-v" id="stat-lastrun">–</div><div class="st-l">마지막 수집</div></div>
-    </div>
-
-    <div class="sec">추적 키워드</div>
-    <div class="kw-box">
-      <div class="kw-row">
-        <input id="kw-input" placeholder="종목명·회사명·테마 추가 (예: SK하이닉스)" />
-        <button id="kw-add-btn">추가</button>
+    <div class="hero">
+      <div class="hero-head">
+        <div class="sec">브리핑</div>
+        <button id="brief-btn">브리핑 생성</button>
       </div>
-      <div class="chips" id="kw-list"></div>
-    </div>
+      <div class="brief-status" id="brief-status"></div>
 
-    <div class="sec">텔레그램 채널</div>
-    <div class="kw-box">
-      <div class="kw-row">
-        <input id="tg-input" placeholder="공개채널 링크 또는 @handle (예: https://t.me/handle)" />
-        <button id="tg-add-btn">추가</button>
+      <div class="day-group">
+        <div class="day-title">오늘</div>
+        <div id="brief-today"><div class="empty">아직 생성된 브리핑 없음 — "브리핑 생성" 눌러서 만들어봐</div></div>
       </div>
-      <div class="chips" id="tg-list"></div>
+      <div class="day-group">
+        <div class="day-title">어제</div>
+        <div id="brief-yesterday"><div class="empty">기록 없음</div></div>
+      </div>
     </div>
 
-    <div class="sec">주목 이슈</div>
-    <div class="kw-box" id="rank-list"><div class="empty">데이터 로딩 중…</div></div>
+    <details class="collapse-box">
+      <summary>추적 키워드 관리</summary>
+      <div class="collapse-body">
+        <div class="kw-row">
+          <input id="kw-input" placeholder="종목명·회사명·테마 추가 (예: SK하이닉스)" />
+          <button id="kw-add-btn">추가</button>
+        </div>
+        <div class="chips" id="kw-list"></div>
+      </div>
+    </details>
 
-    <div class="sec">전체 피드</div>
-    <input id="search-input" placeholder="제목·요약 검색…" />
-    <div class="cats" id="cat-pills"></div>
-    <div id="feed"><div class="empty">데이터 로딩 중…</div></div>
+    <details class="collapse-box">
+      <summary>텔레그램 채널 관리</summary>
+      <div class="collapse-body">
+        <div class="kw-row">
+          <input id="tg-input" placeholder="공개채널 링크 또는 @handle (예: https://t.me/handle)" />
+          <button id="tg-add-btn">추가</button>
+        </div>
+        <div class="chips" id="tg-list"></div>
+      </div>
+    </details>
+
+    <details class="collapse-box">
+      <summary>전체 피드</summary>
+      <div class="collapse-body">
+        <input id="search-input" placeholder="제목·요약 검색…" />
+        <div class="cats" id="cat-pills"></div>
+        <div id="feed"><div class="empty">데이터 로딩 중…</div></div>
+      </div>
+    </details>
   </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 // ── 여기 두 값을 Supabase 프로젝트 정보로 채우세요 (Settings > API) ──
 const SUPABASE_URL = "https://jbagbwhdiswsubidzagb.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpiYWdid2hkaXN3c3ViaWR6YWdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MjQyNzMsImV4cCI6MjEwNTUwMDI3M30.7OCA42m6KvBSVvAWKzXAtJWf6kNgoxn1QjQvXIiuw5U";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpiYWdid2hkaXN3c3ViaWR6YWdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MjQyNzMsImV4cCI6MjEwNTUwMDI3M30.7OCA42m6KvBSVvAWKzXAtJWf6kNgoxn1QjQvXIiuw5U
+";
 // ─────────────────────────────────────────────────────────────
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -151,6 +192,23 @@ function timeAgo(iso){
   if (diff < 3600) return `${Math.floor(diff/60)}분 전`;
   if (diff < 86400) return `${Math.floor(diff/3600)}시간 전`;
   return `${Math.floor(diff/86400)}일 전`;
+}
+
+// KST(UTC+9) 기준 날짜/시간 — 접속 브라우저 시간대와 무관하게 항상 한국시간 기준으로 계산
+function toKST(iso){
+  return new Date(new Date(iso).getTime() + 9*3600*1000);
+}
+function kstDateKey(iso){
+  const k = toKST(iso);
+  return `${k.getUTCFullYear()}-${k.getUTCMonth()}-${k.getUTCDate()}`;
+}
+function kstTimeLabel(iso){
+  const k = toKST(iso);
+  return `${String(k.getUTCHours()).padStart(2,"0")}:${String(k.getUTCMinutes()).padStart(2,"0")}`;
+}
+function kstFullLabel(iso){
+  const k = toKST(iso);
+  return `${k.getUTCMonth()+1}월 ${k.getUTCDate()}일 ${String(k.getUTCHours()).padStart(2,"0")}:${String(k.getUTCMinutes()).padStart(2,"0")} KST`;
 }
 
 function dayLabel(iso){
@@ -209,6 +267,68 @@ async function removeChannel(handle){
   loadChannels();
 }
 
+// ── 브리핑 ──────────────────────────────────────────────
+function renderBriefingEntry(b){
+  const sources = Array.isArray(b.sources) ? b.sources : [];
+  const sourcesHtml = sources.length
+    ? `<details class="brief-sources"><summary>소스 ${sources.length}건 보기</summary>
+        <div class="brief-source-list">
+          ${sources.map(s=>`<a href="${s.url}" target="_blank" rel="noopener">${s.title}</a><span class="brief-source-src"> · ${s.source||""}</span>`).join("")}
+        </div>
+      </details>`
+    : "";
+  return `
+    <div class="brief-entry">
+      <div class="brief-entry-top">
+        <span class="brief-time">${kstTimeLabel(b.created_at)}</span>
+        <span class="brief-count">${b.item_count}건 반영</span>
+      </div>
+      <div class="brief-text">${b.content}</div>
+      ${sourcesHtml}
+    </div>`;
+}
+function renderBriefingGroup(elId, list, emptyMsg){
+  const el = document.getElementById(elId);
+  el.innerHTML = list.length ? list.map(renderBriefingEntry).join("") : `<div class="empty">${emptyMsg}</div>`;
+}
+async function loadBriefings(){
+  const since = new Date(Date.now() - 2*86400000).toISOString();
+  const {data} = await sb.from("briefings").select("*").gte("created_at", since).order("created_at",{ascending:false});
+  const rows = data || [];
+  const todayKey = kstDateKey(new Date().toISOString());
+  const yestKey = kstDateKey(new Date(Date.now()-86400000).toISOString());
+  const today = rows.filter(b=>kstDateKey(b.created_at)===todayKey);
+  const yesterday = rows.filter(b=>kstDateKey(b.created_at)===yestKey);
+  renderBriefingGroup("brief-today", today, `아직 생성된 브리핑 없음 — "브리핑 생성" 눌러서 만들어봐`);
+  renderBriefingGroup("brief-yesterday", yesterday, "기록 없음");
+}
+async function generateBriefing(){
+  const btn = document.getElementById("brief-btn");
+  const status = document.getElementById("brief-status");
+  btn.disabled = true;
+  status.textContent = "새 기사 확인하고 요약하는 중 (몇십 초 걸릴 수 있음)…";
+  try{
+    const res = await fetch("/api/summarize", {method:"POST"});
+    const json = await res.json();
+    if (!res.ok){
+      status.textContent = `오류: ${json.error || "알 수 없는 오류"}`;
+      return;
+    }
+    if (json.skipped){
+      status.textContent = json.message;
+      return;
+    }
+    status.textContent = "";
+    await loadBriefings();
+  } catch(e){
+    status.textContent = `오류: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+document.getElementById("brief-btn").onclick = generateBriefing;
+// ──────────────────────────────────────────────────────────
+
 document.getElementById("kw-add-btn").onclick = addKeyword;
 document.getElementById("tg-add-btn").onclick = addChannel;
 document.getElementById("kw-input").addEventListener("keydown", e=>{if(e.key==="Enter")addKeyword();});
@@ -225,36 +345,6 @@ function renderCatPills(){
     pill.onclick = ()=>{ activeCat = key; renderCatPills(); renderFeed(); };
     el.appendChild(pill);
   });
-}
-
-function renderStats(statusRow){
-  const now = Date.now();
-  const today = allItems.filter(it => now - new Date(it.published_at).getTime() < 86400000).length;
-  const d7 = allItems.filter(it => now - new Date(it.published_at).getTime() < 7*86400000).length;
-  document.getElementById("stat-today").textContent = today;
-  document.getElementById("stat-7d").textContent = d7;
-  document.getElementById("stat-total").textContent = statusRow?.total_items ?? allItems.length;
-  document.getElementById("stat-lastrun").textContent = statusRow?.last_run_at ? timeAgo(statusRow.last_run_at) : "–";
-  document.getElementById("last-updated").textContent = statusRow?.last_run_at
-    ? `마지막 자동수집 ${timeAgo(statusRow.last_run_at)} · 화면은 실시간 동기화`
-    : "화면은 실시간 동기화";
-}
-
-function renderRank(){
-  const weight = {high:3, medium:2, low:1};
-  const top = [...allItems].sort((a,b)=>{
-    const w = (weight[b.importance]||0) - (weight[a.importance]||0);
-    if (w!==0) return w;
-    return new Date(b.published_at) - new Date(a.published_at);
-  }).slice(0,5);
-  const el = document.getElementById("rank-list");
-  if (!top.length){ el.innerHTML = `<div class="empty">데이터 없음</div>`; return; }
-  el.innerHTML = top.map((it,i)=>`
-    <div class="rank-item">
-      <span class="rank-n">${i+1}</span>
-      <span><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a>
-      <span style="color:var(--sub)"> · ${it.source||""}</span></span>
-    </div>`).join("");
 }
 
 function renderFeed(){
@@ -287,32 +377,36 @@ function renderFeed(){
 async function loadItems(){
   const {data} = await sb.from("items").select("*").order("published_at",{ascending:false}).limit(300);
   allItems = data || [];
-  renderRank();
   renderFeed();
 }
 async function loadStatus(){
   const {data} = await sb.from("status").select("*").eq("id",1).single();
-  renderStats(data);
+  document.getElementById("last-updated").textContent = data?.last_run_at
+    ? `마지막 수집: ${kstFullLabel(data.last_run_at)}`
+    : "마지막 수집 정보 없음";
   return data;
 }
 
 async function init(){
   renderCatPills();
-  await Promise.all([loadKeywords(), loadChannels(), loadItems()]);
+  await Promise.all([loadKeywords(), loadChannels(), loadItems(), loadBriefings()]);
   await loadStatus();
 
-  // 실시간 구독 — DB에 새 행이 쓰이는 즉시 화면 반영 (수집 자체는 GitHub Actions가 5분 주기로 폴링)
   sb.channel("public:items")
     .on("postgres_changes", {event:"INSERT", schema:"public", table:"items"}, payload=>{
       allItems = [payload.new, ...allItems.filter(it=>it.id!==payload.new.id)];
-      renderRank(); renderFeed();
+      renderFeed();
     })
     .subscribe();
 
   sb.channel("public:status")
     .on("postgres_changes", {event:"UPDATE", schema:"public", table:"status"}, payload=>{
-      renderStats(payload.new);
+      document.getElementById("last-updated").textContent = `마지막 수집: ${kstFullLabel(payload.new.last_run_at)}`;
     })
+    .subscribe();
+
+  sb.channel("public:briefings")
+    .on("postgres_changes", {event:"INSERT", schema:"public", table:"briefings"}, loadBriefings)
     .subscribe();
 
   sb.channel("public:config")
@@ -320,7 +414,7 @@ async function init(){
     .on("postgres_changes", {event:"*", schema:"public", table:"telegram_channels"}, loadChannels)
     .subscribe();
 
-  setInterval(()=>{ renderFeed(); renderStats(); }, 30000); // "n분 전" 텍스트 갱신용
+  setInterval(renderFeed, 30000);
 }
 init();
 </script>
