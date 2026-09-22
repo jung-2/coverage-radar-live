@@ -104,6 +104,19 @@
   .sig-source-item a{text-decoration:none;}
   .sig-source-item a:hover{text-decoration:underline;}
   .sig-source-meta{color:var(--sub);font-size:10px;}
+  /* 회사/섹터 기준 그룹 카드 (2026-09-22 추가): targets[0](대표 회사/섹터명) 기준으로 묶어서
+     상위 카드 하나 + 그 아래 사건별 서브 항목으로 보여줌 */
+  .sig-group{background:var(--stat);border-radius:8px;padding:10px 12px;margin-bottom:8px;}
+  .sig-group:last-child{margin-bottom:0;}
+  .sig-group-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:7px;}
+  .sig-group-title{font-size:13px;font-weight:700;}
+  .sig-group-count{font-size:10px;color:var(--sub);background:var(--pillbg);border-radius:10px;padding:1px 7px;}
+  .sig-group-items{display:flex;flex-direction:column;gap:6px;}
+  .sig-subitem{background:var(--block);border:1px solid var(--border);border-radius:6px;padding:8px 10px;}
+  .sig-subitem-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;}
+  .sig-badge-sm{font-size:8px;padding:1px 5px;}
+  .sig-subitem-title{font-size:12px;font-weight:500;}
+  .sig-verdict{font-size:11px;font-weight:800;letter-spacing:.02em;}
 
   /* 접이식 보조 섹션 */
   .collapse-box{background:var(--block);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;}
@@ -302,6 +315,23 @@ async function removeChannel(handle){
 const IMPACT_LABEL = {high:"높음", medium:"중간", low:"낮음"};
 const IMPACT_VAR = {high:"--miss", medium:"--note", low:"--sub"};
 
+// note/why 텍스트 맨 앞의 "[BEAT]"/"[MISS]"/"[혼조]"/"[IN-LINE]" 마커를 색깔 뱃지로 바꾸고,
+// 줄바꿈(\n)을 <br>로 바꿔줌 — 리포트 요약(2026-09-22 추가)이 여러 줄로 오는 걸 그대로 보여주기 위함
+const VERDICT_LABEL = {BEAT:"BEAT", MISS:"MISS", "혼조":"혼조", "IN-LINE":"IN-LINE"};
+const VERDICT_VAR = {BEAT:"--beat", MISS:"--miss", "혼조":"--note", "IN-LINE":"--sub"};
+function formatWhy(text){
+  if (!text) return "";
+  let body = text;
+  let verdictHtml = "";
+  const m = body.match(/^\[(BEAT|MISS|혼조|IN-LINE)\]\s*/);
+  if (m){
+    const tag = m[1];
+    verdictHtml = `<span class="sig-verdict" style="color:var(${VERDICT_VAR[tag]||"--sub"})">${VERDICT_LABEL[tag]||tag}</span><br>`;
+    body = body.slice(m[0].length);
+  }
+  return verdictHtml + body.replace(/\n/g, "<br>");
+}
+
 function renderClusterCard(c, compact){
   const targetsHtml = (c.targets||[]).map(t=>`<span class="sig-target">${t}</span>`).join("");
   const sources = Array.isArray(c.sources) ? c.sources : [];
@@ -320,7 +350,7 @@ function renderClusterCard(c, compact){
     ? `<details class="sig-timeline">
         <summary>업데이트 이력 ${updates.length}건</summary>
         <div class="sig-timeline-list">
-          ${updates.slice().reverse().map(u=>`<div class="sig-timeline-item"><span class="sig-timeline-time">${kstTimeLabel(u.at)}</span>${u.note || "새로 감지됨"}</div>`).join("")}
+          ${updates.slice().reverse().map(u=>`<div class="sig-timeline-item"><span class="sig-timeline-time">${kstTimeLabel(u.at)}</span>${formatWhy(u.note) || "새로 감지됨"}</div>`).join("")}
         </div>
       </details>`
     : "";
@@ -333,27 +363,107 @@ function renderClusterCard(c, compact){
         <span class="sig-src">마지막 업데이트 ${kstTimeLabel(c.updated_at)}</span>
       </div>
       <div class="sig-title">${c.headline}</div>
-      ${c.why ? `<div class="sig-why">${c.why}</div>` : ""}
+      ${c.why ? `<div class="sig-why">${formatWhy(c.why)}</div>` : ""}
       ${timelineHtml}
       ${sourcesHtml}
     </div>`;
 }
 
+// 회사/섹터 그룹 안에 들어가는 사건 하나 — renderClusterCard와 거의 같지만, 그룹 카드 상단에
+// 이미 대표 회사/섹터명(groupKey)이 나와 있으므로 그건 targets 칩에서 빼고 나머지만 보여줌
+function renderSubItem(c, groupKey){
+  const otherTargets = (c.targets||[]).filter(t=>t!==groupKey);
+  const targetsHtml = otherTargets.map(t=>`<span class="sig-target">${t}</span>`).join("");
+  const sources = Array.isArray(c.sources) ? c.sources : [];
+  const updates = Array.isArray(c.updates) ? c.updates : [];
+
+  const sourcesHtml = sources.length
+    ? `<details class="sig-sources">
+        <summary>출처 ${sources.length}건 보기</summary>
+        <div class="sig-source-list">
+          ${sources.map(s=>`<div class="sig-source-item"><a href="${s.url}" target="_blank" rel="noopener">${s.title}</a><br><span class="sig-source-meta">${s.source||""} · ${timeAgo(s.published_at)}</span></div>`).join("")}
+        </div>
+      </details>`
+    : "";
+
+  const timelineHtml = updates.length > 1
+    ? `<details class="sig-timeline">
+        <summary>업데이트 이력 ${updates.length}건</summary>
+        <div class="sig-timeline-list">
+          ${updates.slice().reverse().map(u=>`<div class="sig-timeline-item"><span class="sig-timeline-time">${kstTimeLabel(u.at)}</span>${formatWhy(u.note) || "새로 감지됨"}</div>`).join("")}
+        </div>
+      </details>`
+    : "";
+
+  return `
+    <div class="sig-subitem">
+      <div class="sig-subitem-top">
+        <span class="sig-badge sig-badge-sm" style="background:var(${IMPACT_VAR[c.impact]||"--sub"})">${IMPACT_LABEL[c.impact]||"낮음"}</span>
+        ${targetsHtml}
+        <span class="sig-src">${kstTimeLabel(c.updated_at)}</span>
+      </div>
+      <div class="sig-subitem-title">${c.headline}</div>
+      ${c.why ? `<div class="sig-why">${formatWhy(c.why)}</div>` : ""}
+      ${timelineHtml}
+      ${sourcesHtml}
+    </div>`;
+}
+
+// 회사/섹터 카드(2026-09-22 추가) — group.items는 이미 impact 우선순위로 정렬돼 들어옴
+function renderGroupCard(group){
+  const items = group.items;
+  const bestImpact = items[0].impact;
+  const latestIso = items.reduce((m,c)=> new Date(c.updated_at) > new Date(m) ? c.updated_at : m, items[0].updated_at);
+  const subHtml = items.map(c=>renderSubItem(c, group.key)).join("");
+  return `
+    <div class="sig-group">
+      <div class="sig-group-top">
+        <span class="sig-badge" style="background:var(${IMPACT_VAR[bestImpact]||"--sub"})">${IMPACT_LABEL[bestImpact]||"낮음"}</span>
+        <span class="sig-group-title">${group.key}</span>
+        <span class="sig-group-count">${items.length}건</span>
+        <span class="sig-src">최근 ${kstTimeLabel(latestIso)}</span>
+      </div>
+      <div class="sig-group-items">${subHtml}</div>
+    </div>`;
+}
+
+// 회사/섹터 기준 카드 그룹핑(2026-09-22 추가): targets[0](대표 회사/섹터명, api/summarize.js가
+// 이 순서를 보장함) 기준으로 클러스터를 묶어서 카드 하나 + 그 아래 사건별 서브 항목으로 보여줌.
+// medium/high가 하나도 없는(전부 low인) 그룹은 카드로 따로 안 만들고, 기존처럼 "낮은 중요도"
+// 묶음에 개별 항목으로 남김 — 사소한 내용까지 회사 카드로 다 만들면 카드 수가 오히려 안 줄어들기 때문.
 function renderClusterList(elId, clusters, emptyMsg){
   const el = document.getElementById(elId);
   if (!clusters.length){ el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
 
   const order = {high:0, medium:1, low:2};
-  const sorted = [...clusters].sort((a,c)=>{
-    const byImpact = (order[a.impact]??3)-(order[c.impact]??3);
-    if (byImpact !== 0) return byImpact;
-    return new Date(c.updated_at) - new Date(a.updated_at);
-  });
-  const primary = sorted.filter(c=>c.impact!=="low");
-  const low = sorted.filter(c=>c.impact==="low");
+  const byImpactThenRecency = (a,b)=>{
+    const bi = (order[a.impact]??3)-(order[b.impact]??3);
+    if (bi !== 0) return bi;
+    return new Date(b.updated_at) - new Date(a.updated_at);
+  };
 
-  const primaryHtml = primary.length
-    ? primary.map(c=>renderClusterCard(c,false)).join("")
+  const groupsMap = new Map();
+  for (const c of clusters){
+    const key = (c.targets && c.targets[0]) ? c.targets[0] : "기타";
+    if (!groupsMap.has(key)) groupsMap.set(key, []);
+    groupsMap.get(key).push(c);
+  }
+
+  const primaryGroups = [];
+  const low = [];
+  for (const [key, items] of groupsMap){
+    if (items.some(c=>c.impact!=="low")){
+      items.sort(byImpactThenRecency);
+      primaryGroups.push({key, items});
+    } else {
+      low.push(...items);
+    }
+  }
+  primaryGroups.sort((a,b)=>byImpactThenRecency(a.items[0], b.items[0]));
+  low.sort(byImpactThenRecency);
+
+  const primaryHtml = primaryGroups.length
+    ? primaryGroups.map(g=>renderGroupCard(g)).join("")
     : `<div class="empty">눈에 띄는 시그널 없음</div>`;
 
   const lowHtml = low.length
