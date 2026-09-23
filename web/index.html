@@ -67,6 +67,12 @@
   .brief-status{color:var(--sub);font-size:11px;min-height:14px;margin-bottom:6px;}
   .day-group{margin-top:14px;}
   .day-title{font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;margin-bottom:8px;}
+  /* '어제' 섹션 기본 접힘용(2026-09-23 추가) — .sig-low-group과 동일한 화살표 패턴 재사용 */
+  .day-group-collapse{margin-top:14px;}
+  .day-group-collapse summary{font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;cursor:pointer;list-style:none;margin-bottom:8px;}
+  .day-group-collapse summary::-webkit-details-marker{display:none;}
+  .day-group-collapse summary::before{content:"▸ ";}
+  .day-group-collapse[open] summary::before{content:"▾ ";}
   .sig-row{background:var(--stat);border-radius:8px;padding:10px 12px;margin-bottom:8px;}
   .sig-row:last-child{margin-bottom:0;}
   .sig-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;}
@@ -142,18 +148,18 @@
     <div class="hero">
       <div class="hero-head">
         <div class="sec">브리핑</div>
-        <button id="brief-btn">브리핑 생성</button>
+        <button id="brief-btn">업데이트</button>
       </div>
       <div class="brief-status" id="brief-status"></div>
 
       <div class="day-group">
-        <div class="day-title">오늘</div>
-        <div id="brief-today"><div class="empty">아직 생성된 브리핑 없음 — "브리핑 생성" 눌러서 만들어봐</div></div>
+        <div class="day-title" id="today-title">오늘</div>
+        <div id="brief-today"><div class="empty">아직 생성된 업데이트 없음 — "업데이트" 눌러서 만들어봐</div></div>
       </div>
-      <div class="day-group">
-        <div class="day-title">어제</div>
+      <details class="day-group-collapse" id="yesterday-details">
+        <summary id="yesterday-summary">어제</summary>
         <div id="brief-yesterday"><div class="empty">기록 없음</div></div>
-      </div>
+      </details>
     </div>
 
     <details class="collapse-box">
@@ -251,6 +257,12 @@ function kstDayKeyPadded(iso){
   const m = String(k.getUTCMonth()+1).padStart(2,"0");
   const d = String(k.getUTCDate()).padStart(2,"0");
   return `${y}-${m}-${d}`;
+}
+
+// 'YYYY-MM-DD' day_key를 "9월 23일" 형태로(2026-09-23 추가) — 오늘/어제 라벨 옆 날짜 표시용
+function monthDayLabel(dayKey){
+  const [, m, d] = dayKey.split("-").map(Number);
+  return `${m}월 ${d}일`;
 }
 
 function dayLabel(iso){
@@ -441,6 +453,10 @@ function renderClusterList(elId, clusters, emptyMsg){
     if (bi !== 0) return bi;
     return new Date(b.updated_at) - new Date(a.updated_at);
   };
+  // 카드(그룹) 하나가 가장 최근에 받은 업데이트 시각 — 그룹 내부 아이템 중 최댓값(2026-09-23 추가)
+  const groupLatestUpdatedAt = (items) => items.reduce(
+    (max, c) => { const t = new Date(c.updated_at).getTime(); return t > max ? t : max; }, 0
+  );
 
   const groupsMap = new Map();
   for (const c of clusters){
@@ -459,8 +475,11 @@ function renderClusterList(elId, clusters, emptyMsg){
       low.push(...items);
     }
   }
-  primaryGroups.sort((a,b)=>byImpactThenRecency(a.items[0], b.items[0]));
-  low.sort(byImpactThenRecency);
+  // 상단 카드 순서(2026-09-23 변경): impact 우선순위가 아니라 "이 카드가 가장 최근에
+  // 업데이트된 순"으로 정렬 — 업데이트 누를 때마다 방금 바뀐 카드가 맨 위로 오게 하기 위함.
+  // 카드 내부 개별 항목 순서(items.sort 위)는 기존대로 impact 우선 유지.
+  primaryGroups.sort((a,b)=>groupLatestUpdatedAt(b.items) - groupLatestUpdatedAt(a.items));
+  low.sort(byImpactThenRecency); // low 안은 전부 impact가 같으므로(=low) 사실상 이미 시간순
 
   const primaryHtml = primaryGroups.length
     ? primaryGroups.map(g=>renderGroupCard(g)).join("")
@@ -482,7 +501,9 @@ async function loadClusters(){
   const rows = data || [];
   const today = rows.filter(c=>c.day_key===todayKey);
   const yesterday = rows.filter(c=>c.day_key===yestKey);
-  renderClusterList("brief-today", today, `아직 생성된 브리핑 없음 — "브리핑 생성" 눌러서 만들어봐`);
+  document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(todayKey)})`;
+  document.getElementById("yesterday-summary").textContent = `어제 (${monthDayLabel(yestKey)})${yesterday.length ? ` — ${yesterday.length}건` : ""}`;
+  renderClusterList("brief-today", today, `아직 생성된 업데이트 없음 — "업데이트" 눌러서 만들어봐`);
   renderClusterList("brief-yesterday", yesterday, "기록 없음");
 }
 async function generateBriefing(){
@@ -502,7 +523,7 @@ async function generateBriefing(){
       return;
     }
     if (json.has_more_backlog){
-      status.textContent = `${json.item_count}건 처리함(배치 ${json.batches_run}개) — 아직 밀린 게 더 있음, "브리핑 생성" 한번 더 눌러서 이어서 처리해줘`;
+      status.textContent = `${json.item_count}건 처리함(배치 ${json.batches_run}개) — 아직 밀린 게 더 있음, "업데이트" 한번 더 눌러서 이어서 처리해줘`;
     } else {
       status.textContent = "";
     }
