@@ -73,6 +73,11 @@
   .day-group-collapse summary::-webkit-details-marker{display:none;}
   .day-group-collapse summary::before{content:"▸ ";}
   .day-group-collapse[open] summary::before{content:"▾ ";}
+  /* 텔레그램/시황/추적키워드 3탭(2026-09-23 추가) */
+  .tab-nav{display:flex;gap:4px;margin-top:10px;border-bottom:1px solid var(--border);}
+  .tab-btn{font-family:inherit;font-size:12px;font-weight:600;padding:7px 12px;border:none;background:transparent;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;}
+  .tab-btn:hover{color:var(--text);}
+  .tab-btn.active{color:var(--info);border-bottom-color:var(--info);}
   .sig-row{background:var(--stat);border-radius:8px;padding:10px 12px;margin-bottom:8px;}
   .sig-row:last-child{margin-bottom:0;}
   .sig-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;}
@@ -151,6 +156,12 @@
         <button id="brief-btn">업데이트</button>
       </div>
       <div class="brief-status" id="brief-status"></div>
+
+      <div class="tab-nav" id="brief-tabs">
+        <button class="tab-btn active" data-tab="telegram">텔레그램</button>
+        <button class="tab-btn" data-tab="market">시황</button>
+        <button class="tab-btn" data-tab="keyword">추적 키워드</button>
+      </div>
 
       <div class="day-group">
         <div class="day-title" id="today-title">오늘</div>
@@ -494,18 +505,52 @@ function renderClusterList(elId, clusters, emptyMsg){
   el.innerHTML = primaryHtml + lowHtml;
 }
 
-async function loadClusters(){
-  const todayKey = kstDayKeyPadded(new Date().toISOString());
-  const yestKey = kstDayKeyPadded(new Date(Date.now()-86400000).toISOString());
-  const {data} = await sb.from("clusters").select("*").in("day_key", [todayKey, yestKey]).order("updated_at",{ascending:false});
-  const rows = data || [];
-  const today = rows.filter(c=>c.day_key===todayKey);
-  const yesterday = rows.filter(c=>c.day_key===yestKey);
-  document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(todayKey)})`;
-  document.getElementById("yesterday-summary").textContent = `어제 (${monthDayLabel(yestKey)})${yesterday.length ? ` — ${yesterday.length}건` : ""}`;
+// 텔레그램/시황/추적키워드 3탭 분류(2026-09-22 추가) — 새 컬럼 없이 기존 데이터만으로 판단:
+// ① targets 첫 번째가 정확히 "시황"이면 무조건 시황 탭(프롬프트에서 이 문자열만 쓰도록 강제해둠)
+// ② 나머지는 클러스터를 이룬 기사들 중 출처(source)가 "텔레그램: "으로 시작하는 게 더 많으면
+//    텔레그램 탭, 아니면(뉴스검색/키워드 출처가 더 많으면) 추적 키워드 탭
+function classifyClusterTab(c){
+  if (c.targets && c.targets[0] === "시황") return "market";
+  const sources = c.sources || [];
+  if (!sources.length) return "keyword";
+  let tgCount = 0;
+  for (const s of sources) if ((s.source||"").startsWith("텔레그램:")) tgCount++;
+  return tgCount * 2 > sources.length ? "telegram" : "keyword";
+}
+
+let activeBriefTab = "telegram";
+let cachedTodayClusters = [], cachedYesterdayClusters = [];
+let cachedTodayKey = null, cachedYestKey = null;
+
+function renderActiveTab(){
+  document.querySelectorAll(".tab-btn").forEach(btn=>{
+    btn.classList.toggle("active", btn.dataset.tab === activeBriefTab);
+  });
+  const today = cachedTodayClusters.filter(c=>classifyClusterTab(c)===activeBriefTab);
+  const yesterday = cachedYesterdayClusters.filter(c=>classifyClusterTab(c)===activeBriefTab);
+  document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)})`;
+  document.getElementById("yesterday-summary").textContent = `어제 (${monthDayLabel(cachedYestKey)})${yesterday.length ? ` — ${yesterday.length}건` : ""}`;
   renderClusterList("brief-today", today, `아직 생성된 업데이트 없음 — "업데이트" 눌러서 만들어봐`);
   renderClusterList("brief-yesterday", yesterday, "기록 없음");
 }
+
+async function loadClusters(){
+  cachedTodayKey = kstDayKeyPadded(new Date().toISOString());
+  cachedYestKey = kstDayKeyPadded(new Date(Date.now()-86400000).toISOString());
+  const {data} = await sb.from("clusters").select("*").in("day_key", [cachedTodayKey, cachedYestKey]).order("updated_at",{ascending:false});
+  const rows = data || [];
+  cachedTodayClusters = rows.filter(c=>c.day_key===cachedTodayKey);
+  cachedYesterdayClusters = rows.filter(c=>c.day_key===cachedYestKey);
+  renderActiveTab();
+}
+
+document.querySelectorAll(".tab-btn").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    if (activeBriefTab === btn.dataset.tab) return;
+    activeBriefTab = btn.dataset.tab;
+    renderActiveTab();
+  });
+});
 async function generateBriefing(){
   const btn = document.getElementById("brief-btn");
   const status = document.getElementById("brief-status");
