@@ -205,7 +205,7 @@ const UPDATE_TOOL = {
               type: "array",
               items: { type: "string" },
               minItems: 1,
-              description: "관련 종목명 또는 산업/테마명. 절대 빈 배열 금지 — 애매하면 업종/섹터명이라도 최소 1개 채울 것. 첫 번째 항목이 이 클러스터를 대표하는 핵심 회사/섹터명. 섹터 단위 클러스터면 그 뒤에 관련 회사들을 나열하되, 고유 숫자(목표주가·추정치 등)가 주어진 회사만 추가할 것",
+              description: "관련 종목명 또는 산업/테마명. 절대 빈 배열 금지 — 특정 회사/섹터를 못 짚겠고 일반적인 시장 전체 동향/심리 얘기면 첫 번째 항목을 정확히 \"시황\"이라는 단어로 채울 것(\"증시\"·\"시장동향\" 등 다른 표현 금지 — 화면에서 이 정확한 문자열 기준으로 따로 묶어서 보여줌). 첫 번째 항목이 이 클러스터를 대표하는 핵심 회사/섹터명(또는 위 규칙에 따른 \"시황\"). 섹터 단위 클러스터면 그 뒤에 관련 회사들을 나열하되, 고유 숫자(목표주가·추정치 등)가 주어진 회사만 추가할 것",
             },
             note: {
               type: "string",
@@ -220,6 +220,110 @@ const UPDATE_TOOL = {
   },
 };
 
+// ── 텔레그램 "뉴스정리" 글 분리(2026-09-23 추가) ──────────────────
+// 텔레그램 채널에 여러 개의 서로 다른 뉴스가 한 번에 정리되어 올라오는 경우(뉴스정리/데일리
+// 브리핑 스타일), 예전엔 이 글 전체가 통째로 하나의 클러스터로만 처리돼서 예를 들어 그 안에
+// SK하이닉스 얘기가 섞여있어도 하이닉스 클러스터로는 안 들어갔음. 본격적으로 클러스터링하기
+// 전에, 이런 글들을 먼저 AI가 읽고 개별 뉴스 단위로 쪼개서(여러 개의 합성 항목으로 치환)
+// 이후 로직은 그대로 두어도 각 조각이 알아서 맞는 회사/섹터 클러스터로 들어가게 함.
+const TELEGRAM_SPLIT_TOOL = {
+  name: "split_telegram_digests",
+  description:
+    "텔레그램 원문 중에서 여러 개의 서로 다른 뉴스/이슈가 한 번에 정리되어 올라온 글(뉴스정리·데일리 브리핑 스타일)이 있으면, " +
+    "그 글들만 골라서 각각 개별 뉴스 단위로 나눠서 반환한다. 하나의 이슈만 다루는 일반적인 글은 결과에 포함시키지 않는다(그런 항목은 원래대로 유지됨).",
+  input_schema: {
+    type: "object",
+    properties: {
+      splits: {
+        type: "array",
+        description: "여러 뉴스가 섞여있다고 판단된 텔레그램 항목들의 분리 결과만 포함(섞이지 않은 항목은 아예 넣지 말 것)",
+        items: {
+          type: "object",
+          properties: {
+            index: { type: "integer", description: "아래 [텔레그램 원문] 목록에서의 번호" },
+            stories: {
+              type: "array",
+              minItems: 2,
+              description: "이 글 안에 섞여있는 개별 뉴스 목록 — 반드시 2개 이상일 때만 이 항목을 포함시킬 것",
+              items: {
+                type: "object",
+                properties: {
+                  headline: { type: "string", description: "개별 뉴스의 한 줄 제목. 순한글로만 작성(한자 금지)" },
+                  detail: { type: "string", description: "그 뉴스에 대해 원문에 나온 구체적 내용(숫자·사실관계 등 있는 만큼)" },
+                },
+                required: ["headline", "detail"],
+              },
+            },
+          },
+          required: ["index", "stories"],
+        },
+      },
+    },
+    required: ["splits"],
+  },
+};
+
+async function splitTelegramDigests(items, { ANTHROPIC_API_KEY, MODEL }) {
+  // 텔레그램 출처이면서 원문이 어느 정도 긴(여러 뉴스가 섞였을 가능성 있는) 항목만 후보로 삼음 —
+  // 짧은 단신까지 매번 AI에 물어보면 비용만 늘고 어차피 쪼갤 게 없음.
+  const candidates = [];
+  items.forEach((it, i) => {
+    const isTelegram = (it.source || "").startsWith("텔레그램:");
+    if (isTelegram && (it.summary || "").length > 150) candidates.push({ it, idx: i + 1 });
+  });
+  if (!candidates.length) return items;
+
+  const lines = candidates.map(({ it, idx }) => `${idx}. ${it.summary}`).join("\n\n");
+  const prompt =
+    `다음은 텔레그램 채널에 올라온 글들이다(번호 매겨져 있음). 이 중 "여러 개의 서로 다른 뉴스/이슈가 한 번에 정리되어" ` +
+    `올라온 글(뉴스정리·데일리 브리핑 스타일)이 있으면 split_telegram_digests 도구로 그 글들만 개별 뉴스 단위로 나눠서 반환하라. ` +
+    `하나의 이슈만 다루는 글은 결과에 포함시키지 말 것.\n\n[텔레그램 원문]\n${lines}`;
+
+  try {
+    const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 8000,
+        tools: [TELEGRAM_SPLIT_TOOL],
+        tool_choice: { type: "tool", name: "split_telegram_digests" },
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    if (!apiRes.ok) { console.error("텔레그램 분리 호출 실패:", apiRes.status); return items; }
+    const apiJson = await apiRes.json();
+    const toolUse = (apiJson.content || []).find(b => b.type === "tool_use" && b.name === "split_telegram_digests");
+    if (!toolUse || !Array.isArray(toolUse.input?.splits)) return items;
+
+    const splitMap = new Map(); // 1-based index -> stories[]
+    for (const s of toolUse.input.splits) {
+      if (Number.isInteger(s.index) && Array.isArray(s.stories) && s.stories.length >= 2) {
+        splitMap.set(s.index, s.stories);
+      }
+    }
+    if (!splitMap.size) return items;
+
+    const newItems = [];
+    items.forEach((it, i) => {
+      const stories = splitMap.get(i + 1);
+      if (!stories) { newItems.push(it); return; }
+      for (const st of stories) {
+        if (!st.headline) continue;
+        newItems.push({ ...it, title: st.headline.trim(), summary: (st.detail || "").trim() });
+      }
+    });
+    return newItems.length ? newItems : items;
+  } catch (err) {
+    console.error("텔레그램 분리 중 오류(그냥 원본으로 진행):", err.message);
+    return items;
+  }
+}
+
 // items 테이블에서 커서(added_at) 이후로 다음 배치를 가져옴.
 // 같은 poll 실행에서 들어온 행들은 added_at이 완전히 같을 수 있어서(한 트랜잭션 안의 now()),
 // 딱 MAX_ITEMS에서 끊으면 같은 타임스탬프 그룹이 배치 중간에 잘릴 위험이 있음 — 그러면 커서를
@@ -229,7 +333,7 @@ async function fetchNextBatch(sb, cursorIso) {
   const fetchSize = MAX_ITEMS + EXTEND_BUFFER;
   const { data, error } = await sb
     .from("items")
-    .select("title, url, source, category, sentiment, importance, ticker, published_at, added_at")
+    .select("title, url, source, summary, category, sentiment, importance, ticker, published_at, added_at")
     .gt("added_at", cursorIso)
     .order("added_at", { ascending: true })
     .limit(fetchSize);
@@ -294,8 +398,13 @@ export default async function handler(req, res) {
       if (batchesRun >= MAX_BATCHES) { stoppedReason = "batch_cap"; break; }
       if (Date.now() - startedAt > TIME_BUDGET_MS) { stoppedReason = "time_budget"; break; }
 
-      const { batch: items, noMoreAfterThis } = await fetchNextBatch(sb, cursor.toISOString());
-      if (!items.length) { stoppedReason = "caught_up"; break; }
+      const { batch: rawBatch, noMoreAfterThis } = await fetchNextBatch(sb, cursor.toISOString());
+      if (!rawBatch.length) { stoppedReason = "caught_up"; break; }
+
+      // 텔레그램 "뉴스정리" 글(여러 뉴스가 한 번에 섞여있는 글)이 있으면 개별 뉴스 단위로
+      // 쪼갬(2026-09-23 추가) — 쪼개진 뒤에는 이후 로직에서 완전히 일반 항목과 동일하게 처리됨.
+      // items.length가 늘어나므로 cursor 전진(마지막 항목의 added_at)에는 영향 없음(원본 added_at 유지).
+      const items = await splitTelegramDigests(rawBatch, { ANTHROPIC_API_KEY, MODEL });
 
       // 이번 배치에 실제로 섞여있는 기사 날짜(들) — 보통은 하루지만, 백로그가 자정을 넘겨서
       // 처리되면 여러 날짜가 같이 들어있을 수 있음. 아래 조회들은 전부 이 날짜(들) 기준으로 함.
@@ -340,8 +449,10 @@ ${newLines}
 - existing_cluster_ref: 위 [오늘 진행 중인 클러스터] 목록에서 같은 회사(또는 같은 섹터/테마) + 같은 사건인 번호. 해당하는 게 없으면 0
 
 [targets 규칙 — 절대 비워두지 말 것]
-- targets는 반드시 최소 1개 이상 채워야 함 — 빈 배열 금지. 애매하면 업종/섹터명이라도(예: "반도체", "AI인프라", "시황") 반드시 채울 것. 아무 회사/섹터도 특정하지 않는 이름 없는 통으로 몰아넣지 말 것
-- targets 배열의 첫 번째 항목은 이 클러스터를 가장 잘 대표하는 핵심 회사명 또는 섹터/테마명이어야 함(화면에서 이 순서 기준으로 회사별/섹터별로 묶어서 보여줌). 나머지 관련 회사/섹터는 그 뒤에 이어서 나열
+- targets는 반드시 최소 1개 이상 채워야 함 — 빈 배열 금지.
+- 특정 회사나 특정 업종/섹터/테마를 명확히 짚을 수 있으면 그 이름으로 채울 것(예: "SK하이닉스", "HBM", "AI인프라")
+- 특정 회사·섹터를 짚을 수 없는 일반적인 시장 전체 동향/투자심리/지수 얘기(예: 코스피·코스닥 등락, 외국인 수급, 시장 전반 분위기, 거시경제 등)는 targets 첫 번째 항목을 반드시 정확히 "시황"이라는 단어로만 채울 것 — "증시", "시장동향", "마켓" 등 다른 표현으로 바꿔쓰지 말 것(화면에서 이 정확한 문자열 기준으로 따로 묶어서 보여주기 때문에 반드시 지켜야 함)
+- targets 배열의 첫 번째 항목은 이 클러스터를 가장 잘 대표하는 핵심 회사명 또는 섹터/테마명(또는 위 규칙에 따른 "시황")이어야 함(화면에서 이 순서 기준으로 회사별/섹터별로 묶어서 보여줌). 나머지 관련 회사/섹터는 그 뒤에 이어서 나열
 - 섹터/테마 단위 클러스터에서 여러 회사가 언급되더라도, 그 회사만의 고유한 숫자(목표주가·추정치 변경·실적 등)가 리포트/기사에 구체적으로 주어진 경우에만 그 회사도 targets에 추가할 것. 단순히 예시로 이름만 스쳐 지나간 경우는 targets에 추가하지 말 것
 
 [headline 규칙]
