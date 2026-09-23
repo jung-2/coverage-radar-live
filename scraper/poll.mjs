@@ -72,7 +72,9 @@ async function fetchTelegramItems(handle) {
       const title = rawText.length > 60 ? rawText.slice(0, 60) + "…" : rawText;
       items.push({
         title,
-        summary: rawText.slice(0, 400),
+        // 뉴스정리/브리핑 스타일 글은 꽤 길 수 있어서 넉넉하게 저장(2026-09-23 늘림) —
+        // summarize.js의 텔레그램 다중뉴스 분리 단계가 원문 전체를 봐야 정확히 쪼갤 수 있음.
+        summary: rawText.slice(0, 3000),
         url: `https://t.me/${postMatch[1]}`,
         source: `텔레그램: ${handle}`,
         source_type: "telegram",
