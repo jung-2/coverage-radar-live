@@ -74,6 +74,10 @@ const MAX_EXISTING_CLUSTERS = 80;   // 프롬프트에 보여줄 "오늘 진행 
 const MAX_TOKENS = 24000;           // 리포트 숫자 요약이 길어질 수 있어 넉넉히 잡음
 const COOLDOWN_MS = 30 * 1000;      // 연타 방지용 최소 간격
 const FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000; // 이전 실행 기록이 없을 때 기본 조회 범위(24시간)
+const MAX_BACKLOG_MS = 48 * 60 * 60 * 1000; // (2026-09-27 추가) 커서가 이보다 더 옛날이면 강제로 이 시점까지 당겨서 시작함.
+                                     // 화면은 어차피 오늘/어제만 보여주는데, 무슨 이유로든(장애 등) 커서가 며칠씩 밀리면
+                                     // 오래된 거 순서대로 다 처리해야 최근 걸로 넘어가는 구조라 오늘/어제가 계속 안 보이는
+                                     // 문제가 있었음 — 48시간(이틀)보다 오래 밀린 백로그는 그냥 버리고 최근 것부터 처리함.
 const MAX_BATCHES = 20;             // 한 번 호출에 처리할 배치 수 안전장치(주로 아래 시간 예산이 먼저 걸림)
 const TIME_BUDGET_MS = 240 * 1000;  // Vercel 함수 제한(300초) 안에서 안전하게 멈추기 위한 시간 예산
 const IMPACT_RANK = { high: 3, medium: 2, low: 1 };
@@ -384,9 +388,14 @@ export default async function handler(req, res) {
       }
     }
 
-    const startCursor = lastRun?.period_to
+    let startCursor = lastRun?.period_to
       ? new Date(lastRun.period_to)
       : new Date(Date.now() - FALLBACK_WINDOW_MS);
+
+    // 커서가 너무 옛날(48시간 초과)이면 강제로 당김 — 그 사이 밀려있던 백로그는 영영 스킵됨(의도된 동작)
+    const minAllowedCursor = new Date(Date.now() - MAX_BACKLOG_MS);
+    const skippedOldBacklog = startCursor < minAllowedCursor;
+    if (skippedOldBacklog) startCursor = minAllowedCursor;
 
     // 2) 커서 이후로 밀린 게 남아있는 한(시간/횟수 예산 안에서) 150개씩 끊어서 이어서 처리
     let cursor = startCursor;
@@ -713,7 +722,8 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         period_to: cursor.toISOString(),
         item_count: totalProcessed,
         content: `${totalProcessed}건 처리(배치 ${batchesRun}개) · 새 클러스터 ${totalNewClusters}개 · 기존 클러스터 갱신 ${touchedClusterIds.size}건` +
-          (hasMoreBacklog ? ` · 아직 밀린 게 남음(${stoppedReason === "time_budget" ? "시간 예산 초과" : "배치 수 한도 초과"}) — 다시 눌러서 이어서 처리 필요` : ""),
+          (hasMoreBacklog ? ` · 아직 밀린 게 남음(${stoppedReason === "time_budget" ? "시간 예산 초과" : "배치 수 한도 초과"}) — 다시 눌러서 이어서 처리 필요` : "") +
+          (skippedOldBacklog ? ` · 48시간 넘게 밀린 오래된 백로그는 건너뛰고 최근 것부터 처리함` : ""),
         signals: [],
       });
     if (logErr) throw logErr;
