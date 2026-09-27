@@ -65,7 +65,9 @@
 import { createClient } from "@supabase/supabase-js";
 
 const MODEL = "claude-haiku-4-5-20251001";
-const MAX_ITEMS = 150;              // 한 배치당 분류할 최대 신규 항목 수(비용/토큰 제한용 + 응답 길이 제한용)
+const MAX_ITEMS = 75;               // 한 배치당 분류할 최대 신규 항목 수(비용/토큰 제한용 + 응답 길이 제한용)
+                                     // (2026-09-27 축소: 150개는 밀린 게 많을 때 한 번에 프롬프트/응답이 너무 커져서
+                                     // 모델이 emit_updates 스키마를 못 맞추고 형식 오류로 실패하는 경우가 있었음)
 const EXTEND_BUFFER = 200;          // 배치 경계가 같은 added_at 타임스탬프 그룹을 자르지 않도록 여유로 더 가져오는 개수
 const MAX_EXISTING_CLUSTERS = 80;   // 프롬프트에 보여줄 "오늘 진행 중인 클러스터" 최대 개수(이보다 많아도
                                      // 아래 중복 방지 안전장치가 전체 클러스터를 대상으로 한 번 더 검사함)
