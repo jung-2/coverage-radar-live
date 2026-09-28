@@ -551,28 +551,55 @@ document.querySelectorAll(".tab-btn").forEach(btn=>{
     renderActiveTab();
   });
 });
+// 밀린 게 많아서 한 번 호출로 다 못 끝내면(has_more_backlog:true) 예전엔 사람이 "업데이트"를
+// 여러 번 눌러야 했음(2026-09-28 변경) — 이제는 화면이 알아서 다 끝날 때까지 자동으로 이어서
+// 호출함. 서버 쪽 연타 방지 쿨다운(30초)에 걸리면(429) 에러로 안 띄우고 잠깐 기다렸다 자동
+// 재시도함 — 사람이 누른 게 아니라 자동으로 이어붙이는 거라 쿨다운은 그냥 기다리면 되는 거임.
+// 혹시 모를 무한루프 방지로 최대 25번까지만 자동으로 이어서 처리함.
 async function generateBriefing(){
   const btn = document.getElementById("brief-btn");
   const status = document.getElementById("brief-status");
   btn.disabled = true;
-  status.textContent = "새 기사 확인하고 요약하는 중 (밀린 게 많으면 몇 분 걸릴 수 있음)…";
+  const MAX_ROUNDS = 25;
+  let totalItems = 0;
+  let round = 0;
   try{
-    const res = await fetch("/api/summarize", {method:"POST"});
-    const json = await res.json();
-    if (!res.ok){
-      status.textContent = `오류: ${json.error || "알 수 없는 오류"}`;
-      return;
+    while (true){
+      round++;
+      status.textContent = round === 1
+        ? "새 기사 확인하고 요약하는 중 (밀린 게 많으면 몇 분 걸릴 수 있음)…"
+        : `아직 밀린 게 남아서 자동으로 이어서 처리하는 중… (지금까지 ${totalItems}건 처리함, ${round}번째 호출)`;
+      const res = await fetch("/api/summarize", {method:"POST"});
+      const json = await res.json().catch(()=>({}));
+
+      if (res.status === 429){
+        // 연타 방지 쿨다운에 걸림 — 자동 이어처리 중이니 쿨다운 끝날 때까지 기다렸다 자동 재시도
+        status.textContent = "잠깐 대기 중… (연타 방지 쿨다운, 자동으로 다시 시도함)";
+        await new Promise(r=>setTimeout(r, 32000));
+        round--; // 이번 시도는 실제 처리가 아니었으니 회차 수에서 빼줌
+        continue;
+      }
+      if (!res.ok){
+        status.textContent = `오류: ${json.error || "알 수 없는 오류"}`;
+        return;
+      }
+      if (json.skipped){
+        status.textContent = totalItems ? "" : json.message;
+        break;
+      }
+
+      totalItems += json.item_count || 0;
+      await loadClusters();
+
+      if (!json.has_more_backlog){
+        status.textContent = "";
+        break;
+      }
+      if (round >= MAX_ROUNDS){
+        status.textContent = `${totalItems}건 처리함 — 자동 반복 한도(${MAX_ROUNDS}회)에 도달함. 아직 밀린 게 더 있으면 "업데이트" 한번 더 눌러줘`;
+        break;
+      }
     }
-    if (json.skipped){
-      status.textContent = json.message;
-      return;
-    }
-    if (json.has_more_backlog){
-      status.textContent = `${json.item_count}건 처리함(배치 ${json.batches_run}개) — 아직 밀린 게 더 있음, "업데이트" 한번 더 눌러서 이어서 처리해줘`;
-    } else {
-      status.textContent = "";
-    }
-    await loadClusters();
   } catch(e){
     status.textContent = `오류: ${e.message}`;
   } finally {
