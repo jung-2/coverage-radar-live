@@ -704,6 +704,22 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
       batchesRun++;
       cursor = new Date(items[items.length - 1].added_at);
 
+      // 배치 하나 끝날 때마다 진행 지점(커서)을 바로 저장(2026-09-28 추가) — 예전엔 전체 실행이
+      // 끝까지 성공해야만 맨 마지막에 한 번 저장됐어서, 다음 배치에서 타임아웃/에러로 이번 실행이
+      // 죽어버리면 이미 API 호출까지 해서 처리 완료한 배치들의 진행 지점이 기록 안 되고 날아갔음.
+      // 그러면 다음 실행이 그 지점을 못 찾고 같은 구간을 처음부터 또 처리하면서 API를 중복으로
+      // 호출하는 낭비가 생겼음 — 이제 배치마다 체크포인트를 남겨서, 죽어도 이미 처리한 만큼은
+      // 다음 실행이 절대 다시 안 하도록 함. 체크포인트 저장 자체가 실패해도(드문 경우) 이번 실행은
+      // 계속 진행 — 맨 마지막에 정상 완료되면 어차피 최종 요약 기록이 다시 저장됨.
+      const { error: checkpointErr } = await sb.from("briefings").insert({
+        period_from: startCursor.toISOString(),
+        period_to: cursor.toISOString(),
+        item_count: totalProcessed,
+        content: `(진행중) ${totalProcessed}건 처리(배치 ${batchesRun}개)`,
+        signals: [],
+      });
+      if (checkpointErr) console.error("체크포인트 저장 실패(무시하고 계속):", checkpointErr.message);
+
       if (noMoreAfterThis) { stoppedReason = "caught_up"; break; }
     }
 
