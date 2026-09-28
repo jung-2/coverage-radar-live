@@ -132,6 +132,26 @@ function isLikelyDuplicate(targetsA, headlineA, targetsB, headlineB) {
   return headlineSimilarity(headlineA, headlineB) >= DUP_SIMILARITY_THRESHOLD;
 }
 
+// ── 텔레그램/일반출처 교차 병합 방지(2026-09-28 추가) ──────────────────
+// 예전엔 "같은 회사 + 같은 사건"이면 출처가 텔레그램이든 일반 뉴스검색이든 상관없이 하나의
+// 클러스터로 합쳐버렸음. 근데 화면(web/index.html)의 텔레그램/추적키워드 탭 분류는 클러스터
+// 안에 섞인 출처들 중 다수결로 탭 하나를 정하다 보니, 텔레그램발 내용이 나중에 일반뉴스 출처가
+// 더 많이 합쳐지면서 "추적 키워드" 탭으로 새어 들어가는 문제가 있었음. 지금은 애초에 텔레그램
+// 출처 항목과 일반(뉴스검색/키워드) 출처 항목이 하나의 클러스터로 합쳐지지 못하게 막음 — 같은
+// 사건이 텔레그램과 일반뉴스 양쪽에 다 잡히면, 카드가 2개로 나뉘어서 각자 자기 탭에만 뜨게 됨.
+// poll.mjs가 텔레그램 항목의 source를 항상 "텔레그램: <채널>"로 저장해서 이 접두어로 판단함.
+function isTelegramSourceStr(s) {
+  return (s || "").startsWith("텔레그램:");
+}
+function idxListOrigin(idxList, items) {
+  return idxList.some(i => isTelegramSourceStr(items[i - 1]?.source)) ? "telegram" : "other";
+}
+function clusterOrigin(clusterRow) {
+  const sources = clusterRow.sources || [];
+  if (!sources.length) return "other";
+  return isTelegramSourceStr(sources[0].source) ? "telegram" : "other";
+}
+
 // targets가 끝까지 비어있을 때 최후의 안전장치로 채우는 카테고리 기반 태그
 function deriveCategoryFallbackTag(idxList, items) {
   const counts = {};
@@ -566,7 +586,9 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         const note = typeof u.note === "string" ? u.note.trim() : "";
         const ref = Number.isInteger(u.existing_cluster_ref) ? u.existing_cluster_ref : 0;
 
-        if (ref >= 1 && ref <= existingClusters.length) {
+        const refOriginMatches = ref >= 1 && ref <= existingClusters.length
+        && clusterOrigin(existingClusters[ref - 1]) === idxListOrigin(idxList, items);
+      if (refOriginMatches) {
           const g = getOrCreateGroup(existingClusters[ref - 1]);
           g.idxList.push(...idxList);
           targets.forEach(t => g.targets.add(t));
@@ -588,7 +610,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
       //     두 개 이상의 새 클러스터로 쪼갰으면 여기서 하나로 합침
       const mergedNewEntries = [];
       for (const entry of newEntries) {
-        const match = mergedNewEntries.find(m => isLikelyDuplicate(m.targets, m.headline, entry.targets, entry.headline));
+        const match = (() => { const entryOrigin = idxListOrigin(entry.idxList, items); return mergedNewEntries.find(m => idxListOrigin(m.idxList, items) === entryOrigin && isLikelyDuplicate(m.targets, m.headline, entry.targets, entry.headline)); })();
         if (match) {
           match.idxList.push(...entry.idxList);
           entry.targets.forEach(t => { if (!match.targets.includes(t)) match.targets.push(t); });
@@ -610,12 +632,13 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
 
       const finalNewEntries = [];
       for (const entry of mergedNewEntries) {
+    const entryOrigin = idxListOrigin(entry.idxList, items);
         let target = null;
         for (const g of existingGroups.values()) {
-          if (isLikelyDuplicate(g.current.targets, g.current.headline, entry.targets, entry.headline)) { target = g; break; }
+          if (clusterOrigin(g.current) === entryOrigin && isLikelyDuplicate(g.current.targets, g.current.headline, entry.targets, entry.headline)) { target = g; break; }
         }
         if (!target) {
-          const fullMatch = allTodayClusters.find(c => isLikelyDuplicate(c.targets, c.headline, entry.targets, entry.headline));
+          const fullMatch = allTodayClusters.find(c => clusterOrigin(c) === entryOrigin && isLikelyDuplicate(c.targets, c.headline, entry.targets, entry.headline));
           if (fullMatch) target = getOrCreateGroup(fullMatch);
         }
         if (target) {
