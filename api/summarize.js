@@ -394,6 +394,19 @@ export default async function handler(req, res) {
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   const startedAt = Date.now();
 
+  // "업데이트 버튼을 누른 순간"(2026-09-29 추가): 화면이 버튼 한 번당 하나씩 만들어 보내는 시각.
+  // 이어서 여러 번 호출돼도(밀린 게 많을 때) 같은 값이 오므로 한 번 누른 것으로 묶임. 이번에 처리한
+  // 기사(sources)와 요약 메모(updates)에 run_at으로 붙여서, 화면이 누른 순간별로 구분해서 보여줌.
+  // 값이 없거나 이상하면(옛날 화면 캐시 등) 이번 호출 시작 시각으로 대신함.
+  let runAt = new Date();
+  try {
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const d = new Date(body && body.run_at);
+    const age = Date.now() - d.getTime();
+    if (!isNaN(d) && age >= -60 * 1000 && age <= 6 * 3600 * 1000) runAt = d;
+  } catch { /* 본문이 없거나 JSON이 아니면 무시 */ }
+  const runAtIso = runAt.toISOString();
+
   try {
     // 1) 마지막 실행 기록 확인 (연타 방지 + 이어서 처리할 커서 위치 산정)
     //    커서는 "마지막으로 실제 처리 완료한 지점"(period_to)을 씀 — 예전처럼 "그때의 시각(created_at)"을
@@ -655,7 +668,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
       const now = new Date(); // published_at이 없는 예외적인 경우의 최후 fallback으로만 씀
       const toSource = (i) => {
         const it = items[i - 1];
-        return { title: it.title, url: it.url, source: it.source, published_at: it.published_at, category: it.category };
+        return { title: it.title, url: it.url, source: it.source, published_at: it.published_at, category: it.category, run_at: runAtIso };
       };
 
       // 기존 클러스터 갱신 (LLM이 직접 매칭한 것 + 중복 방지 안전장치가 재배정한 것 전부 포함)
@@ -677,7 +690,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         const prevUpdatedAt = current.updated_at ? new Date(current.updated_at) : null;
         const nextUpdatedAt = (prevUpdatedAt && prevUpdatedAt > newItemsAt) ? prevUpdatedAt : newItemsAt;
         const mergedUpdates = [...(current.updates || [])];
-        if (mergedNote) mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote });
+        if (mergedNote) mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, run_at: runAtIso });
 
         const { error: updErr } = await sb
           .from("clusters")
@@ -714,7 +727,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
             targets,
             why: e.note,
             sources,
-            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨" }],
+            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", run_at: runAtIso }],
             created_at: createdAt.toISOString(),
             updated_at: createdAt.toISOString(),
           };

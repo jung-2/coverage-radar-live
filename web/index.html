@@ -89,6 +89,10 @@
   .sig-title a:hover{text-decoration:underline;}
   .sig-why{font-size:11.5px;color:var(--sub);margin-top:4px;line-height:1.65;}
   .sig-row-compact .sig-title{font-size:11.5px;font-weight:400;}
+  /* 업데이트 누른 순간 구분선(2026-09-29 추가) */
+  .round-divider{display:flex;align-items:center;gap:8px;margin:16px 0 8px;font-size:11px;font-weight:700;color:var(--info);}
+  .round-divider::before,.round-divider::after{content:"";flex:1;height:1px;background:var(--info);opacity:.45;}
+  .round-divider:first-child{margin-top:4px;}
   .sig-low-group{background:var(--block);border:1px solid var(--border);border-radius:8px;margin-top:2px;}
   .sig-low-group summary{padding:8px 12px;font-size:11px;color:var(--info);cursor:pointer;list-style:none;}
   .sig-low-group summary::-webkit-details-marker{display:none;}
@@ -454,8 +458,10 @@ function renderGroupCard(group){
 // medium/high가 하나도 없는(전부 low인) 그룹은 카드로 따로 안 만들고, 기존처럼 "낮은 중요도"
 // 묶음에 개별 항목으로 남김 — 사소한 내용까지 회사 카드로 다 만들면 카드 수가 오히려 안 줄어들기 때문.
 function renderClusterList(elId, clusters, emptyMsg){
-  const el = document.getElementById(elId);
-  if (!clusters.length){ el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
+  document.getElementById(elId).innerHTML = clusterListHtml(clusters, emptyMsg);
+}
+function clusterListHtml(clusters, emptyMsg){
+  if (!clusters.length) return `<div class="empty">${emptyMsg}</div>`;
 
   const order = {high:0, medium:1, low:2};
   const byImpactThenRecency = (a,b)=>{
@@ -501,7 +507,49 @@ function renderClusterList(elId, clusters, emptyMsg){
       </details>`
     : "";
 
-  el.innerHTML = primaryHtml + lowHtml;
+  return primaryHtml + lowHtml;
+}
+
+// ── 업데이트를 누른 순간별로 나눠서 보기(2026-09-29 추가) ─────────────
+// summarize.js가 기사(sources)와 요약 메모(updates)에 run_at(버튼 누른 시각)을 붙여 저장함.
+// 클러스터 하나를 run_at별로 쪼갠 "가상 클러스터"(그 순간에 새로 들어온 기사/메모만 담음)를 만들어서
+// 누른 순간마다 줄(구분선)을 긋고 그 아래에 그때 바뀐 카드만 보여줌. 같은 회사 카드가 여러 번
+// 업데이트됐으면 누른 순간마다 따로 나옴. run_at이 없는 예전 기록은 맨 아래 "이전 기록"에 모아둠.
+function roundLabel(iso, dayKey){
+  const t = kstTimeLabel(iso);
+  return kstDayKeyPadded(iso) === dayKey ? t : `${monthDayLabel(kstDayKeyPadded(iso))} ${t}`;
+}
+function roundDividerHtml(text){
+  return `<div class="round-divider"><span>${text}</span></div>`;
+}
+function roundListHtml(clusters, emptyMsg, dayKey){
+  if (!clusters.length) return `<div class="empty">${emptyMsg}</div>`;
+  const rounds = new Map(); // run_at -> 가상 클러스터[]
+  const legacy = [];
+  const maxPub = (arr, fallback) => arr.reduce((m,x)=> x.published_at && new Date(x.published_at) > new Date(m) ? x.published_at : m, fallback);
+  for (const c of clusters){
+    const sources = Array.isArray(c.sources) ? c.sources : [];
+    const updates = Array.isArray(c.updates) ? c.updates : [];
+    const runs = new Set([...sources, ...updates].map(x=>x.run_at).filter(Boolean));
+    const oldSources = sources.filter(x=>!x.run_at), oldUpdates = updates.filter(x=>!x.run_at);
+    if (!runs.size || oldSources.length || oldUpdates.length){
+      const oldNote = oldUpdates.length ? oldUpdates[oldUpdates.length-1].note : (runs.size ? "" : c.why);
+      legacy.push({...c, sources: oldSources, updates: oldUpdates, why: oldNote, updated_at: maxPub(oldSources, c.updated_at)});
+    }
+    for (const r of runs){
+      const rs = sources.filter(x=>x.run_at===r), ru = updates.filter(x=>x.run_at===r);
+      const note = ru.map(u=>u.note).filter(n=>n && n!=="새로 감지됨").join(" / ");
+      rounds.set(r, [...(rounds.get(r)||[]), {...c, sources: rs, updates: ru, why: note, updated_at: maxPub(rs, c.updated_at)}]);
+    }
+  }
+  const runKeys = [...rounds.keys()].sort((a,b)=> new Date(b) - new Date(a));
+  let html = runKeys.map(r=>{
+    const list = rounds.get(r);
+    const nSrc = list.reduce((n,c)=>n + c.sources.length, 0);
+    return roundDividerHtml(`${roundLabel(r, dayKey)} 업데이트 · 카드 ${list.length}개 · 기사 ${nSrc}건`) + clusterListHtml(list, "");
+  }).join("");
+  if (legacy.length) html += roundDividerHtml(`이전 기록 (누른 시각 구분 없음) · 카드 ${legacy.length}개`) + clusterListHtml(legacy, "");
+  return html;
 }
 
 // 텔레그램/추적키워드 2탭 분류(2026-09-22 추가, 2026-09-29 시황탭 제거) — 새 컬럼 없이
@@ -670,8 +718,8 @@ function renderActiveTab(){
   const yesterday = cachedYesterdayClusters.filter(c=>classifyClusterTab(c)===activeBriefTab);
   document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)})`;
   document.getElementById("yesterday-summary").textContent = `어제 (${monthDayLabel(cachedYestKey)})${yesterday.length ? ` — ${yesterday.length}건` : ""}`;
-  renderClusterList("brief-today", today, `아직 생성된 업데이트 없음 — "업데이트" 눌러서 만들어봐`);
-  renderClusterList("brief-yesterday", yesterday, "기록 없음");
+  document.getElementById("brief-today").innerHTML = roundListHtml(today, `아직 생성된 업데이트 없음 — "업데이트" 눌러서 만들어봐`, cachedTodayKey);
+  document.getElementById("brief-yesterday").innerHTML = roundListHtml(yesterday, "기록 없음", cachedYestKey);
 }
 
 async function loadClusters(){
@@ -703,13 +751,14 @@ async function generateBriefing(){
   const MAX_ROUNDS = 25;
   let totalItems = 0;
   let round = 0;
+  const pressAt = new Date().toISOString(); // 이 버튼을 누른 순간 — 이어서 여러 번 호출돼도 같은 값을 보내서 한 번 누른 것으로 묶임
   try{
     while (true){
       round++;
       status.textContent = round === 1
         ? "새 기사 확인하고 요약하는 중 (밀린 게 많으면 몇 분 걸릴 수 있음)…"
         : `아직 밀린 게 남아서 자동으로 이어서 처리하는 중… (지금까지 ${totalItems}건 처리함, ${round}번째 호출)`;
-      const res = await fetch("/api/summarize", {method:"POST"});
+      const res = await fetch("/api/summarize", {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({run_at: pressAt})});
       const json = await res.json().catch(()=>({}));
 
       if (res.status === 429){
