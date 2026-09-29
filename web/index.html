@@ -695,7 +695,7 @@ let kisMoves = new Map();
 let kisAt = null; // 가장 최근 시세 갱신 시각
 const kisMoverCount = () => [...kisMoves.values()].filter(p => Math.abs(p) >= KW_MOVE_MIN).length;
 
-function groupKeywordItems(items, isToday){
+function groupKeywordItems(items){
   const byKw = new Map();
   for (const it of items){
     if (!it._kw) it._kw = kwScoreTitle(it.title, it.keyword_match);
@@ -720,7 +720,7 @@ function groupKeywordItems(items, isToday){
     clusters.sort((a,b)=> (b.score - a.score) || (new Date(b.members[0].published_at) - new Date(a.members[0].published_at)));
     // 급등락: KIS 시세가 있으면 그 값, 없으면 가장 최근에 "±5% 이상 움직였다"고 쓴 기사 제목 기준(list는 최신순)
     const mv = list.find(it => it._kw.move != null);
-    const kis = isToday ? kisMoves.get(key) : undefined;
+    const kis = kisMoves.get(key);
     groups.push({key, clusters, count: list.length, latest: list[0].published_at, score: clusters[0].score,
       move: kis !== undefined ? (Math.abs(kis) >= KW_MOVE_MIN ? Math.round(kis * 10) / 10 : null) : (mv ? mv._kw.move : null),
       moveSrc: kis !== undefined ? "kis" : "news"});
@@ -788,15 +788,14 @@ function renderKeywordGroupCard(g, topN = KW_TOP_CLUSTERS){
 
 // 맨 위: 급등/급락(±5% 이상) 종목의 회사 카드 구역(등락률 큰 순) → 그 아래: 기존 뉴스 정리(핵심 → 중요 순,
 // 일반 기사만 있는 회사는 접어둠). 급등락 종목은 위 구역에만 나오고 아래에는 중복해서 안 나옴.
-function renderKeywordList(elId, items, emptyMsg, isToday){
+function renderKeywordList(elId, items, emptyMsg){
   const el = document.getElementById(elId);
-  if (!items.length && !(isToday && kisMoverCount())){ el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
-  const groups = groupKeywordItems(items, isToday);
-  if (isToday){ // KIS가 급등락이라고 한 종목 중 오늘 기사가 하나도 없는 것도 카드로 추가
-    for (const [key, pct] of kisMoves){
-      if (Math.abs(pct) >= KW_MOVE_MIN && !groups.some(g=>g.key===key)){
-        groups.push({key, clusters: [], count: 0, latest: null, score: 0, move: Math.round(pct * 10) / 10, moveSrc: "kis"});
-      }
+  if (!items.length && !kisMoverCount()){ el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
+  const groups = groupKeywordItems(items);
+  // KIS가 급등락이라고 한 종목 중 오늘 기사가 하나도 없는 것도 카드로 추가
+  for (const [key, pct] of kisMoves){
+    if (Math.abs(pct) >= KW_MOVE_MIN && !groups.some(g=>g.key===key)){
+      groups.push({key, clusters: [], count: 0, latest: null, score: 0, move: Math.round(pct * 10) / 10, moveSrc: "kis"});
     }
   }
   const movers = groups.filter(g=>g.move != null).sort((a,b)=> Math.abs(b.move) - Math.abs(a.move));
@@ -804,7 +803,7 @@ function renderKeywordList(elId, items, emptyMsg, isToday){
   const primary = others.filter(g=>kwTier(g.score) !== "normal");
   const rest = others.filter(g=>kwTier(g.score) === "normal");
   const moversHtml = movers.length
-    ? roundDividerHtml(`급등락 종목 (±${KW_MOVE_MIN}% 이상) · ${movers.length}개${isToday && kisAt ? ` · 시세 ${kstTimeLabel(kisAt)} 기준` : ""}`) + movers.map(g=>renderKeywordGroupCard(g, KW_MOVER_CLUSTERS)).join("")
+    ? roundDividerHtml(`급등락 종목 (±${KW_MOVE_MIN}% 이상) · ${movers.length}개${kisAt ? ` · 시세 ${kstTimeLabel(kisAt)} 기준` : ""}`) + movers.map(g=>renderKeywordGroupCard(g, KW_MOVER_CLUSTERS)).join("")
     : "";
   const primaryHead = movers.length ? roundDividerHtml("뉴스 정리 (중요도순)") : "";
   const primaryHtml = primary.length
@@ -825,7 +824,7 @@ function refreshDayKeys(){
 
 async function loadKeywordItems(){
   refreshDayKeys();
-  const since = new Date(cachedYestKey + "T00:00:00+09:00").toISOString();
+  const since = new Date(cachedTodayKey + "T00:00:00+09:00").toISOString(); // 오늘 0시(KST)부터만
   const rows = [];
   for (let from = 0; from < KW_MAX_ROWS; from += 1000){
     const {data, error} = await sb.from("items")
@@ -873,16 +872,16 @@ function renderActiveTab(){
   // 브리핑 버튼은 텔레그램 탭 전용 — 추적 키워드 탭은 요약 없이 바로 정리해서 보여줌
   document.getElementById("brief-btn").style.display = isKw ? "none" : "";
   document.getElementById("brief-status").style.display = isKw ? "none" : "";
+  if (isKw) document.getElementById("yesterday-details").style.display = "none"; // 키워드 탭엔 '어제' 구역 없음
   if (isKw){
+    // 추적 키워드 탭은 오늘 것만 보여줌 — 어제 이전 기사는 수집 때 저장하지 않고 DB에서도 지움(poll.mjs)
     const today = cachedKeywordItems.filter(it=>kstDayKeyPadded(it.published_at)===cachedTodayKey);
-    const yesterday = cachedKeywordItems.filter(it=>kstDayKeyPadded(it.published_at)===cachedYestKey);
-    const companies = list => new Set(list.map(it=>it.keyword_match)).size;
-    document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)})${today.length ? ` — ${companies(today)}개 회사 · ${today.length}건` : ""}`;
-    document.getElementById("yesterday-summary").textContent = `어제 (${monthDayLabel(cachedYestKey)})${yesterday.length ? ` — ${companies(yesterday)}개 회사 · ${yesterday.length}건` : ""}`;
-    renderKeywordList("brief-today", today, "오늘 수집된 기사 없음", true);
-    renderKeywordList("brief-yesterday", yesterday, "기록 없음", false);
+    const companies = new Set(today.map(it=>it.keyword_match)).size;
+    document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)})${today.length ? ` — ${companies}개 회사 · ${today.length}건` : ""}`;
+    renderKeywordList("brief-today", today, "오늘 수집된 기사 없음");
     return;
   }
+  document.getElementById("yesterday-details").style.display = "";
   const today = cachedTodayClusters.filter(c=>classifyClusterTab(c)===activeBriefTab);
   const yesterday = cachedYesterdayClusters.filter(c=>classifyClusterTab(c)===activeBriefTab);
   document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)})`;

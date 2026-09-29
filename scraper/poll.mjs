@@ -135,6 +135,13 @@ async function fetchTelegramItems(handle) {
 // 실행 방식: node scraper/poll.mjs telegram   — 텔레그램 채널만(몇 초, 워크플로 poll-telegram.yml)
 //            node scraper/poll.mjs keywords   — 추적 키워드만(Google News, 워크플로 poll-keywords.yml)
 // 둘을 따로 돌려서, 키워드 수집이 느려지거나 차단돼도 텔레그램 수집은 영향이 없게 함.
+// 추적 키워드 뉴스는 "오늘" 것만 씀(2026-09-29): 오늘 0시(KST) 이전에 나온 기사는 저장하지 않고, 이미 저장된 것도 지움.
+function startOfTodayKstIso() {
+  const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+  const y = kstNow.getUTCFullYear(), m = kstNow.getUTCMonth(), d = kstNow.getUTCDate();
+  return new Date(Date.UTC(y, m, d) - 9 * 3600 * 1000).toISOString();
+}
+
 const MODE = process.argv[2];
 if (MODE !== "telegram" && MODE !== "keywords") {
   console.error("사용법: node scraper/poll.mjs telegram|keywords");
@@ -162,11 +169,13 @@ async function main() {
     for (let i = 0; i < batch.length; i += GROUP_SIZE) groups.push(batch.slice(i, i + GROUP_SIZE));
     console.log(`키워드 ${batch.length}개(전체 ${keywords.length}개 중, 검색 ${groups.length}번) 조회`);
 
+    const todayStart = startOfTodayKstIso();
     const results = await runPool(groups, fetchKeywordGroup);
     // 같은 실행 안에서 주소가 같거나 제목이 같은 기사(여러 매체가 똑같이 받아쓴 것)는 하나만 남김
     const seen = new Set();
     allItems = results.flat().filter((it) => {
       if (!it.url || !it.title) return false;
+      if (new Date(it.published_at) < new Date(todayStart)) return false; // 오늘 0시(KST) 이전 기사는 안 씀
       const key = "t:" + it.title.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
       if (seen.has(key) || seen.has("u:" + it.url)) return false;
       seen.add(key);
@@ -199,6 +208,19 @@ async function main() {
     } else {
       inserted = data?.length || 0;
     }
+  }
+
+  let purged = 0;
+  if (MODE === "keywords") {
+    const { data: deleted, error: delError } = await supabase
+      .from("items")
+      .delete()
+      .eq("source_type", "newswire")
+      .lt("published_at", startOfTodayKstIso())
+      .select("id");
+    if (delError) console.error("지난 키워드 기사 삭제 실패:", delError.message);
+    else purged = deleted?.length || 0;
+    if (purged) console.log(`오늘 이전 키워드 기사 ${purged}건 삭제`);
   }
 
   const { count } = await supabase.from("items").select("id", { count: "exact", head: true });
