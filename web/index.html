@@ -744,6 +744,7 @@ async function generateBriefing(){
     status.textContent = `오류: ${e.message}`;
   } finally {
     btn.disabled = false;
+    loadLastBriefing(); // 상단 "텔레그램 요약" 시각 갱신(실시간 구독이 안 먹는 경우 대비)
   }
 }
 document.getElementById("brief-btn").onclick = generateBriefing;
@@ -799,9 +800,11 @@ async function loadItems(){
   allItems = data || [];
   renderFeed();
 }
-// 마지막 수집 시각(2026-09-29): 텔레그램(status id 1)과 추적 키워드(id 2)가 따로 돌아서 따로 표시.
-// 오늘이면 시각만, 아니면 "9/28 14:32"로 보여줌. 마우스를 올리면(툴팁) 각 수집의 결과 메모가 나옴.
+// 상단 시각 표시(2026-09-29): 텔레그램은 "요약 버튼을 마지막으로 누른 시각"(briefings 최신 기록),
+// 추적 키워드는 "자동 수집이 마지막으로 돈 시각"(status id 2). 텔레그램 글 수집 시각(status id 1)은 툴팁에만 표시.
+// 오늘이면 시각만, 아니면 "9/28 14:32"로 보여줌. 마우스를 올리면(툴팁) 각 결과 메모가 나옴.
 const statusRows = {};
+let lastBriefing = null;
 function statusLabel(iso){
   if (!iso) return "정보 없음";
   const k = toKST(iso);
@@ -811,14 +814,20 @@ function statusLabel(iso){
 function renderStatus(){
   const tg = statusRows[1], kw = statusRows[2];
   const el = document.getElementById("last-updated");
-  el.textContent = `수집 · 텔레그램 ${statusLabel(tg?.last_run_at)} · 키워드 ${statusLabel(kw?.last_run_at)}`;
-  el.title = `텔레그램: ${tg?.last_note || "-"}
-키워드: ${kw?.last_note || "-"}`;
+  el.textContent = `텔레그램 요약 ${statusLabel(lastBriefing?.created_at)} · 키워드 수집 ${statusLabel(kw?.last_run_at)}`;
+  el.title = `텔레그램 요약: ${lastBriefing?.content || "-"}
+텔레그램 글 수집(자동): ${statusLabel(tg?.last_run_at)} — ${tg?.last_note || "-"}
+키워드 수집(자동): ${kw?.last_note || "-"}`;
+}
+async function loadLastBriefing(){
+  const {data} = await sb.from("briefings").select("created_at,content").order("created_at",{ascending:false}).limit(1);
+  lastBriefing = (data && data[0]) || null;
+  renderStatus();
 }
 async function loadStatus(){
   const {data} = await sb.from("status").select("*");
   for (const r of data || []) statusRows[r.id] = r;
-  renderStatus();
+  await loadLastBriefing();
 }
 
 async function init(){
@@ -841,6 +850,10 @@ async function init(){
       statusRows[payload.new.id] = payload.new;
       renderStatus();
     })
+    .subscribe();
+
+  sb.channel("public:briefings")
+    .on("postgres_changes", {event:"INSERT", schema:"public", table:"briefings"}, loadLastBriefing)
     .subscribe();
 
   sb.channel("public:clusters")
