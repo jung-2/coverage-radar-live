@@ -203,14 +203,18 @@ async function main() {
 
   const { count } = await supabase.from("items").select("id", { count: "exact", head: true });
 
-  await supabase
-    .from("status")
-    .update({
+  // 수집 상태는 종류별로 한 줄씩: id 1 = 텔레그램, id 2 = 추적 키워드(화면 상단에 마지막 수집 시각을 따로 표시)
+  // id 2 줄은 supabase/schema.sql 아래쪽 안내대로 한 번 만들어 둬야 함(없으면 여기서 오류 로그만 남기고 계속)
+  const { error: statusError } = await supabase.from("status").upsert(
+    {
+      id: MODE === "keywords" ? 2 : 1,
       last_run_at: new Date().toISOString(),
       last_note: `이번 실행: 신규 ${inserted}건 (${note})`,
       total_items: count || 0,
-    })
-    .eq("id", 1);
+    },
+    { onConflict: "id" }
+  );
+  if (statusError) console.error("status 갱신 실패:", statusError.message);
 
   console.log(`신규 저장: ${inserted}건, 전체 누적: ${count}건`);
 }

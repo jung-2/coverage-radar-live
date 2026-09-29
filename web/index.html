@@ -799,12 +799,26 @@ async function loadItems(){
   allItems = data || [];
   renderFeed();
 }
+// 마지막 수집 시각(2026-09-29): 텔레그램(status id 1)과 추적 키워드(id 2)가 따로 돌아서 따로 표시.
+// 오늘이면 시각만, 아니면 "9/28 14:32"로 보여줌. 마우스를 올리면(툴팁) 각 수집의 결과 메모가 나옴.
+const statusRows = {};
+function statusLabel(iso){
+  if (!iso) return "정보 없음";
+  const k = toKST(iso);
+  const time = `${String(k.getUTCHours()).padStart(2,"0")}:${String(k.getUTCMinutes()).padStart(2,"0")}`;
+  return kstDayKeyPadded(iso) === kstDayKeyPadded(new Date().toISOString()) ? time : `${k.getUTCMonth()+1}/${k.getUTCDate()} ${time}`;
+}
+function renderStatus(){
+  const tg = statusRows[1], kw = statusRows[2];
+  const el = document.getElementById("last-updated");
+  el.textContent = `수집 · 텔레그램 ${statusLabel(tg?.last_run_at)} · 키워드 ${statusLabel(kw?.last_run_at)}`;
+  el.title = `텔레그램: ${tg?.last_note || "-"}
+키워드: ${kw?.last_note || "-"}`;
+}
 async function loadStatus(){
-  const {data} = await sb.from("status").select("*").eq("id",1).single();
-  document.getElementById("last-updated").textContent = data?.last_run_at
-    ? `마지막 수집: ${kstFullLabel(data.last_run_at)}`
-    : "마지막 수집 정보 없음";
-  return data;
+  const {data} = await sb.from("status").select("*");
+  for (const r of data || []) statusRows[r.id] = r;
+  renderStatus();
 }
 
 async function init(){
@@ -822,8 +836,10 @@ async function init(){
     .subscribe();
 
   sb.channel("public:status")
-    .on("postgres_changes", {event:"UPDATE", schema:"public", table:"status"}, payload=>{
-      document.getElementById("last-updated").textContent = `마지막 수집: ${kstFullLabel(payload.new.last_run_at)}`;
+    .on("postgres_changes", {event:"*", schema:"public", table:"status"}, payload=>{
+      if (!payload.new || payload.new.id == null) return;
+      statusRows[payload.new.id] = payload.new;
+      renderStatus();
     })
     .subscribe();
 

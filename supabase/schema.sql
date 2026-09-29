@@ -46,6 +46,10 @@ create table if not exists status (
   constraint singleton check (id = 1)
 );
 insert into status (id) values (1) on conflict (id) do nothing;
+-- (2026-09-29) 수집을 텔레그램/키워드로 나눠서 마지막 수집 시각도 따로 저장함: id 1 = 텔레그램, id 2 = 추적 키워드.
+-- 이미 만들어진 DB에서는 Supabase SQL Editor에서 아래 두 줄을 한 번 실행해야 함.
+alter table status drop constraint if exists singleton;
+insert into status (id) values (2) on conflict (id) do nothing;
 
 -- 키워드 로테이션 커서 (poll 스크립트 전용, 매 실행마다 다음 배치로 이동)
 create table if not exists poll_cursor (
