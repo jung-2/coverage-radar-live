@@ -1,10 +1,10 @@
 // 커버리지 레이더 라이브 — 수집 스크립트
-// GitHub Actions에서 5분 간격으로 이 파일을 실행함(.github/workflows/poll.yml 참고).
+// GitHub Actions에서 5분 간격으로 이 파일을 실행함(.github/workflows/poll-telegram.yml, poll-keywords.yml 참고 — 텔레그램/키워드를 따로 실행).
 // 로컬에서 테스트하려면: SUPABASE_URL=... SUPABASE_SERVICE_KEY=... node scraper/poll.mjs
 
 import { createClient } from "@supabase/supabase-js";
 import Parser from "rss-parser";
-import { FIXED_THEMES, KEYWORD_BATCH_SIZE, categorize, guessSentiment, guessImportance } from "./sources.mjs";
+import { KEYWORD_BATCH_SIZE, GROUP_SIZE, CONCURRENCY, PER_KEYWORD_LIMIT, categorize, guessSentiment, guessImportance } from "./sources.mjs";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -28,13 +28,36 @@ function splitTitleSource(rawTitle) {
   return { title: rawTitle.slice(0, idx), source: rawTitle.slice(idx + 3) };
 }
 
-async function fetchKeywordItems(keyword) {
+let failedSearches = 0; // 이번 실행에서 (재시도 후에도) 실패한 키워드 검색 수 — 차단 여부 확인용
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 429(차단)나 일시 오류면 잠깐 기다렸다가 딱 1번만 재시도
+async function parseWithRetry(url) {
   try {
-    const feed = await rss.parseURL(googleNewsUrl(keyword));
-    return (feed.items || []).slice(0, 8).map((it) => {
+    return await rss.parseURL(url);
+  } catch (err) {
+    await sleep(2500);
+    return await rss.parseURL(url);
+  }
+}
+
+// 키워드 여러 개를 "A" OR "B" 한 번의 검색으로 조회하고, 기사 제목/요약에 들어있는 키워드로
+// keyword_match를 다시 붙임(어느 키워드에도 안 걸리는 기사는 관련 없는 검색 결과라 버림).
+async function fetchKeywordGroup(group) {
+  try {
+    const query = group.map((k) => `"${k}"`).join(" OR ");
+    const feed = await parseWithRetry(googleNewsUrl(query));
+    const counts = new Map();
+    const out = [];
+    for (const it of feed.items || []) {
       const { title, source } = splitTitleSource(it.title || "");
       const text = `${title} ${it.contentSnippet || ""}`;
-      return {
+      const lower = text.toLowerCase();
+      const keyword = group.find((k) => lower.includes(k.toLowerCase()) && (counts.get(k) || 0) < PER_KEYWORD_LIMIT);
+      if (!keyword) continue;
+      counts.set(keyword, (counts.get(keyword) || 0) + 1);
+      out.push({
         title,
         summary: (it.contentSnippet || "").slice(0, 300),
         url: it.link,
@@ -45,12 +68,29 @@ async function fetchKeywordItems(keyword) {
         sentiment: guessSentiment(text),
         importance: guessImportance(text),
         published_at: it.isoDate || it.pubDate || new Date().toISOString(),
-      };
-    });
+      });
+    }
+    return out;
   } catch (err) {
-    console.error(`[keyword] ${keyword} 실패:`, err.message);
+    failedSearches++;
+    console.error(`[keyword] ${group.join(", ")} 실패:`, err.message);
     return [];
   }
+}
+
+// 동시에 CONCURRENCY개까지만 실행(요청 사이에 짧게 쉼)
+async function runPool(tasks, worker) {
+  const results = [];
+  let next = 0;
+  async function run() {
+    while (next < tasks.length) {
+      const i = next++;
+      results[i] = await worker(tasks[i]);
+      await sleep(300);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, tasks.length) }, run));
+  return results;
 }
 
 async function fetchTelegramItems(handle) {
@@ -92,30 +132,58 @@ async function fetchTelegramItems(handle) {
   }
 }
 
+// 실행 방식: node scraper/poll.mjs telegram   — 텔레그램 채널만(몇 초, 워크플로 poll-telegram.yml)
+//            node scraper/poll.mjs keywords   — 추적 키워드만(Google News, 워크플로 poll-keywords.yml)
+// 둘을 따로 돌려서, 키워드 수집이 느려지거나 차단돼도 텔레그램 수집은 영향이 없게 함.
+const MODE = process.argv[2];
+if (MODE !== "telegram" && MODE !== "keywords") {
+  console.error("사용법: node scraper/poll.mjs telegram|keywords");
+  process.exit(1);
+}
+
 async function main() {
-  const [{ data: keywordRows }, { data: channelRows }, { data: cursorRow }] = await Promise.all([
-    supabase.from("keywords").select("term").order("term"),
-    supabase.from("telegram_channels").select("handle"),
-    supabase.from("poll_cursor").select("idx").eq("id", 1).single(),
-  ]);
+  let allItems = [];
+  let note = "";
 
-  const keywords = (keywordRows || []).map((r) => r.term);
-  const channels = (channelRows || []).map((r) => r.handle);
-  const startIdx = cursorRow?.idx || 0;
-  const batch = [];
-  for (let i = 0; i < Math.min(KEYWORD_BATCH_SIZE, keywords.length); i++) {
-    batch.push(keywords[(startIdx + i) % keywords.length]);
+  if (MODE === "keywords") {
+    const [{ data: keywordRows }, { data: cursorRow }] = await Promise.all([
+      supabase.from("keywords").select("term").order("term"),
+      supabase.from("poll_cursor").select("idx").eq("id", 1).single(),
+    ]);
+    const keywords = (keywordRows || []).map((r) => r.term);
+    const startIdx = cursorRow?.idx || 0;
+    const batch = [];
+    for (let i = 0; i < Math.min(KEYWORD_BATCH_SIZE, keywords.length); i++) {
+      batch.push(keywords[(startIdx + i) % keywords.length]);
+    }
+    const nextIdx = keywords.length ? (startIdx + KEYWORD_BATCH_SIZE) % keywords.length : 0;
+
+    const groups = [];
+    for (let i = 0; i < batch.length; i += GROUP_SIZE) groups.push(batch.slice(i, i + GROUP_SIZE));
+    console.log(`키워드 ${batch.length}개(전체 ${keywords.length}개 중, 검색 ${groups.length}번) 조회`);
+
+    const results = await runPool(groups, fetchKeywordGroup);
+    // 같은 실행 안에서 주소가 같거나 제목이 같은 기사(여러 매체가 똑같이 받아쓴 것)는 하나만 남김
+    const seen = new Set();
+    allItems = results.flat().filter((it) => {
+      if (!it.url || !it.title) return false;
+      const key = "t:" + it.title.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+      if (seen.has(key) || seen.has("u:" + it.url)) return false;
+      seen.add(key);
+      seen.add("u:" + it.url);
+      return true;
+    });
+
+    await supabase.from("poll_cursor").update({ idx: nextIdx }).eq("id", 1);
+    note = `키워드 ${batch.length}개` + (failedSearches ? ` · 검색 ${groups.length}번 중 ${failedSearches}번 실패(차단 의심)` : "");
+  } else {
+    const { data: channelRows } = await supabase.from("telegram_channels").select("handle");
+    const channels = (channelRows || []).map((r) => r.handle);
+    console.log(`텔레그램 채널 ${channels.length}개 조회`);
+    const results = await Promise.all(channels.map(fetchTelegramItems));
+    allItems = results.flat().filter((it) => it.url && it.title);
+    note = `텔레그램 채널 ${channels.length}개`;
   }
-  const nextIdx = keywords.length ? (startIdx + KEYWORD_BATCH_SIZE) % keywords.length : 0;
-
-  console.log(`고정 테마 ${FIXED_THEMES.length}개 + 키워드 ${batch.length}개(전체 ${keywords.length}개 중) + 텔레그램 채널 ${channels.length}개 조회`);
-
-  const searchTerms = [...FIXED_THEMES, ...batch];
-  const results = await Promise.all([
-    ...searchTerms.map(fetchKeywordItems),
-    ...channels.map(fetchTelegramItems),
-  ]);
-  const allItems = results.flat().filter((it) => it.url && it.title);
 
   console.log(`수집된 원시 항목: ${allItems.length}건 (중복은 DB unique(url)에서 자동 무시)`);
 
@@ -133,15 +201,13 @@ async function main() {
     }
   }
 
-  await supabase.from("poll_cursor").update({ idx: nextIdx }).eq("id", 1);
-
   const { count } = await supabase.from("items").select("id", { count: "exact", head: true });
 
   await supabase
     .from("status")
     .update({
       last_run_at: new Date().toISOString(),
-      last_note: `이번 실행: 신규 ${inserted}건 (검색 ${searchTerms.length}개 + 텔레그램 ${channels.length}개)`,
+      last_note: `이번 실행: 신규 ${inserted}건 (${note})`,
       total_items: count || 0,
     })
     .eq("id", 1);

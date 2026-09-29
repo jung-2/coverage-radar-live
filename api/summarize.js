@@ -364,6 +364,7 @@ async function fetchNextBatch(sb, cursorIso) {
   const { data, error } = await sb
     .from("items")
     .select("title, url, source, summary, category, sentiment, importance, ticker, published_at, added_at")
+    .eq("source_type", "telegram") // 추적 키워드 뉴스는 AI 요약 없이 화면에서 바로 정리함(2026-09-29) — 텔레그램만 처리
     .gt("added_at", cursorIso)
     .order("added_at", { ascending: true })
     .limit(fetchSize);

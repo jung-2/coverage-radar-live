@@ -519,10 +519,153 @@ let activeBriefTab = "telegram";
 let cachedTodayClusters = [], cachedYesterdayClusters = [];
 let cachedTodayKey = null, cachedYestKey = null;
 
+// ── 추적 키워드 탭(2026-09-29 변경) ─────────────────────────────
+// AI 요약 없이, 수집된 뉴스(items, source_type='newswire')를 화면에서 바로 정리함:
+// 회사(keyword_match)별 카드 → 그 안에서 제목이 비슷한 기사끼리 한 줄로 묶음("한국경제 외 3곳").
+// 수집이 끝나면 Realtime으로 바로 뜸 — 브리핑 버튼/clusters 테이블과 무관(텔레그램 탭 전용).
+const KW_MAX_ROWS = 3000;       // 오늘+어제 기사 최대 불러올 개수(1000개씩 페이지 3번)
+const KW_SIMILAR = 0.5;         // 제목 유사도(글자 2-그램 Dice)가 이 이상이면 같은 뉴스로 묶음 — 안 묶이면 낮추고, 엉뚱한 게 묶이면 올림
+const KW_TOP_CLUSTERS = 5;      // 회사 카드에서 처음 보여줄 묶음 수(나머지는 접어둠)
+let cachedKeywordItems = [];
+
+function esc(s){
+  return String(s ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+}
+function safeUrl(u){ return /^https?:\/\//i.test(u || "") ? esc(u) : "#"; }
+function bigramSet(s){
+  const clean = String(s || "").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+  const set = new Set();
+  for (let i = 0; i < clean.length - 1; i++) set.add(clean.slice(i, i + 2));
+  return set;
+}
+function diceSim(A, B){
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  for (const g of A) if (B.has(g)) inter++;
+  return (2 * inter) / (A.size + B.size);
+}
+const KW_SENT = {beat:["호재","--beat"], miss:["악재","--miss"], note:["주의","--note"]};
+
+function groupKeywordItems(items){
+  const byKw = new Map();
+  for (const it of items){
+    if (!byKw.has(it.keyword_match)) byKw.set(it.keyword_match, []);
+    byKw.get(it.keyword_match).push(it);
+  }
+  const groups = [];
+  for (const [key, list] of byKw){
+    list.sort((a,b)=> new Date(b.published_at) - new Date(a.published_at));
+    const clusters = []; // {rep, bg, members} — rep은 가장 최근 기사
+    for (const it of list){
+      const bg = bigramSet(it.title);
+      const hit = clusters.find(c => diceSim(bg, c.bg) >= KW_SIMILAR);
+      if (hit) hit.members.push(it); else clusters.push({rep: it, bg, members: [it]});
+    }
+    groups.push({key, clusters, count: list.length, latest: list[0].published_at});
+  }
+  groups.sort((a,b)=> new Date(b.latest) - new Date(a.latest));
+  return groups;
+}
+
+function renderKeywordCluster(c){
+  const rep = c.rep;
+  const sent = KW_SENT[rep.sentiment];
+  const badge = sent ? `<span class="sig-badge sig-badge-sm" style="background:var(${sent[1]})">${sent[0]}</span>` : "";
+  const srcs = [...new Set(c.members.map(m=>m.source || "Google News"))];
+  const srcText = srcs.length > 1 ? `${esc(srcs[0])} 외 ${srcs.length-1}곳` : esc(srcs[0]);
+  const others = c.members.slice(1);
+  const moreHtml = others.length
+    ? `<details class="sig-sources">
+        <summary>비슷한 기사 ${others.length}건 보기</summary>
+        <div class="sig-source-list">
+          ${others.map(m=>`<div class="sig-source-item"><a href="${safeUrl(m.url)}" target="_blank" rel="noopener">${esc(m.title)}</a><br><span class="sig-source-meta">${esc(m.source||"")} · ${timeAgo(m.published_at)}</span></div>`).join("")}
+        </div>
+      </details>`
+    : "";
+  return `
+    <div class="sig-subitem">
+      <div class="sig-subitem-top">${badge}<span class="sig-source-meta">${srcText}</span><span class="sig-src">${kstTimeLabel(rep.published_at)}</span></div>
+      <div class="sig-subitem-title"><a href="${safeUrl(rep.url)}" target="_blank" rel="noopener" style="text-decoration:none">${esc(rep.title)}</a></div>
+      ${moreHtml}
+    </div>`;
+}
+
+function renderKeywordGroupCard(g){
+  const shown = g.clusters.slice(0, KW_TOP_CLUSTERS).map(renderKeywordCluster).join("");
+  const rest = g.clusters.slice(KW_TOP_CLUSTERS);
+  const restHtml = rest.length
+    ? `<details class="sig-sources"><summary>나머지 ${rest.length}건 보기</summary><div class="sig-group-items" style="margin-top:6px">${rest.map(renderKeywordCluster).join("")}</div></details>`
+    : "";
+  return `
+    <div class="sig-group">
+      <div class="sig-group-top">
+        <span class="sig-group-title">${esc(g.key)}</span>
+        <span class="sig-group-count">${g.count}건</span>
+        <span class="sig-src">최근 ${kstTimeLabel(g.latest)}</span>
+      </div>
+      <div class="sig-group-items">${shown}${restHtml}</div>
+    </div>`;
+}
+
+function renderKeywordList(elId, items, emptyMsg){
+  const el = document.getElementById(elId);
+  if (!items.length){ el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
+  el.innerHTML = groupKeywordItems(items).map(renderKeywordGroupCard).join("");
+}
+
+function refreshDayKeys(){
+  cachedTodayKey = kstDayKeyPadded(new Date().toISOString());
+  cachedYestKey = kstDayKeyPadded(new Date(Date.now()-86400000).toISOString());
+}
+
+async function loadKeywordItems(){
+  refreshDayKeys();
+  const since = new Date(cachedYestKey + "T00:00:00+09:00").toISOString();
+  const rows = [];
+  for (let from = 0; from < KW_MAX_ROWS; from += 1000){
+    const {data, error} = await sb.from("items")
+      .select("id,title,url,source,sentiment,keyword_match,published_at")
+      .eq("source_type","newswire").not("keyword_match","is",null)
+      .gte("published_at", since)
+      .order("published_at",{ascending:false}).order("id",{ascending:false})
+      .range(from, from+999);
+    if (error || !data) break;
+    rows.push(...data);
+    if (data.length < 1000) break;
+  }
+  cachedKeywordItems = rows;
+  if (activeBriefTab === "keyword") renderActiveTab();
+}
+
+// 수집 한 번에 새 기사가 수백 건씩 INSERT로 들어오므로, 화면 갱신은 모아서 한 번만
+let kwRenderTimer = null;
+function addKeywordItemLive(it){
+  if (it.source_type !== "newswire" || !it.keyword_match) return;
+  if (cachedKeywordItems.some(x=>x.id===it.id)) return;
+  cachedKeywordItems.unshift(it);
+  if (activeBriefTab !== "keyword") return;
+  clearTimeout(kwRenderTimer);
+  kwRenderTimer = setTimeout(renderActiveTab, 1000);
+}
+
 function renderActiveTab(){
   document.querySelectorAll(".tab-btn").forEach(btn=>{
     btn.classList.toggle("active", btn.dataset.tab === activeBriefTab);
   });
+  const isKw = activeBriefTab === "keyword";
+  // 브리핑 버튼은 텔레그램 탭 전용 — 추적 키워드 탭은 요약 없이 바로 정리해서 보여줌
+  document.getElementById("brief-btn").style.display = isKw ? "none" : "";
+  document.getElementById("brief-status").style.display = isKw ? "none" : "";
+  if (isKw){
+    const today = cachedKeywordItems.filter(it=>kstDayKeyPadded(it.published_at)===cachedTodayKey);
+    const yesterday = cachedKeywordItems.filter(it=>kstDayKeyPadded(it.published_at)===cachedYestKey);
+    const companies = list => new Set(list.map(it=>it.keyword_match)).size;
+    document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)})${today.length ? ` — ${companies(today)}개 회사 · ${today.length}건` : ""}`;
+    document.getElementById("yesterday-summary").textContent = `어제 (${monthDayLabel(cachedYestKey)})${yesterday.length ? ` — ${companies(yesterday)}개 회사 · ${yesterday.length}건` : ""}`;
+    renderKeywordList("brief-today", today, "오늘 수집된 기사 없음");
+    renderKeywordList("brief-yesterday", yesterday, "기록 없음");
+    return;
+  }
   const today = cachedTodayClusters.filter(c=>classifyClusterTab(c)===activeBriefTab);
   const yesterday = cachedYesterdayClusters.filter(c=>classifyClusterTab(c)===activeBriefTab);
   document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)})`;
@@ -666,7 +809,7 @@ async function loadStatus(){
 
 async function init(){
   renderCatPills();
-  await Promise.all([loadKeywords(), loadChannels(), loadItems(), loadClusters()]);
+  await Promise.all([loadKeywords(), loadChannels(), loadItems(), loadClusters(), loadKeywordItems()]);
   await loadStatus();
 
   // 실시간 구독 — DB에 새 행이 쓰이는 즉시 화면 반영 (수집 자체는 GitHub Actions가 5분 주기로 폴링)
@@ -674,6 +817,7 @@ async function init(){
     .on("postgres_changes", {event:"INSERT", schema:"public", table:"items"}, payload=>{
       allItems = [payload.new, ...allItems.filter(it=>it.id!==payload.new.id)];
       renderFeed();
+      addKeywordItemLive(payload.new);
     })
     .subscribe();
 

@@ -4,7 +4,7 @@
 반도체/AI인프라 커버리지 뉴스·텔레그램을 자동으로 모아 보여주는 개인용 대시보드.
 라이브 주소: https://coverage-radar-live.vercel.app/
 
-- `scraper/poll.mjs` + `scraper/sources.mjs`: GitHub Actions(`.github/workflows/poll.yml`)가 5분마다 실행. Google News RSS(추적 키워드 + 고정 테마) + 텔레그램 공개채널(`t.me/s/<handle>`)을 긁어서 Supabase `items` 테이블에 저장
+- `scraper/poll.mjs` + `scraper/sources.mjs`: GitHub Actions 워크플로 2개가 각각 5분마다 따로 실행(`poll-telegram.yml` → `node scraper/poll.mjs telegram`, `poll-keywords.yml` → `node scraper/poll.mjs keywords`). 텔레그램 공개채널(`t.me/s/<handle>`) / Google News RSS(추적 키워드, 2개씩 `OR`로 묶어 검색, 매 실행마다 전체 순회)를 긁어서 Supabase `items` 테이블에 저장. 서로 영향 없게 일부러 분리한 것
 - `web/index.html`: 대시보드 화면(단일 파일). Vercel이 `web` 폴더를 정적 호스팅. Supabase Realtime 구독으로 새 데이터 즉시 반영
 - `api/summarize.js`: Vercel 서버리스 함수. 브리핑 탭의 "수동 버튼"을 누르면 새로 쌓인 기사를 Claude API(Haiku)로 묶고 요약해서 `clusters`/`briefings` 테이블에 저장
 - `supabase/schema.sql`: 테이블 정의 + 초기 키워드 시드. 주의: `clusters`, `briefings` 테이블은 이 파일에 없음(나중에 Supabase에서 직접 추가됨). 스키마를 바꿀 땐 이 파일도 같이 맞춰 줄 것
@@ -24,7 +24,7 @@
 ## 이미 정해진 결정사항 (되돌리지 말 것)
 - 브리핑은 자동 스케줄 없이 **수동 버튼만**. 버튼 누를 때만 요약 실행
 - 브리핑은 **오늘/어제 뉴스만** 보면 됨. 48시간보다 오래 밀린 백로그는 버림(`MAX_BACKLOG_MS`). 오래된 것부터 순서대로 다 처리하는 방식은 사용자가 싫어함
-- 브리핑 탭은 **텔레그램 / 추적 키워드 2탭 체제**. "시황" 자동분류 탭은 AI 분류가 부정확해서 없앴음. 다만 AI가 targets에 "시황"이라는 단어를 쓰는 것 자체는 막지 않음
+- 브리핑 탭은 **텔레그램 / 추적 키워드 2탭 체제**이고 **둘은 독립적으로 동작**(2026-09-29 변경). 텔레그램 탭만 AI 요약(수동 버튼, `summarize.js`는 텔레그램 글만 처리). 추적 키워드 탭은 AI 요약 없이 `items`를 화면(`web/index.html`)이 바로 읽어서 회사(`keyword_match`)별 카드 + 제목 비슷한 기사 묶음(규칙 기반)으로 정리. 키워드 탭에 AI 요약/버튼을 다시 붙이지 말 것(속도 때문에 뺀 것). "시황" 자동분류 탭은 AI 분류가 부정확해서 없앴음. 다만 AI가 targets에 "시황"이라는 단어를 쓰는 것 자체는 막지 않음
 - 텔레그램은 공개 채널만(봇 인증·비공개 채널 안 씀)
 - DART 공시 연동은 일단 빠져 있음. 나중에 붙일 수 있음
 - `keywords`/`telegram_channels`는 화면에서 누구나 추가/삭제 가능하게 열려 있음(개인용 전제)

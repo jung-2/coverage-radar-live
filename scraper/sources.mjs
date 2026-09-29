@@ -1,16 +1,11 @@
-// 고정 테마 검색어 — 사용자가 대시보드에서 추가하는 키워드(keywords 테이블)와 별도로 매 실행마다 항상 포함
-export const FIXED_THEMES = [
-  "advanced packaging CoWoS",
-  "HBM4 memory",
-  "co-packaged optics CPO",
-  "800VDC power semiconductor",
-  "AI server capex",
-  "TSMC monthly revenue",
-];
-
-// 한 번 실행(poll)당 사용자 키워드에서 몇 개씩 순환할지 — 너무 많으면 Google News RSS가 순간적으로
-// 막히거나(429) 실행 시간이 길어짐. 5분 주기 실행 기준으로 이 정도면 전체 목록이 20~30분 안에 한 바퀴 돔.
-export const KEYWORD_BATCH_SIZE = 12;
+// 한 번 실행(poll)당 사용자 키워드(keywords 테이블, 전부 기업명)에서 몇 개씩 순환할지.
+// 키워드 GROUP_SIZE개를 "A" OR "B" 한 번의 검색으로 묶어서 조회하므로(poll.mjs 참고)
+// 실제 Google News 요청 수는 KEYWORD_BATCH_SIZE / GROUP_SIZE개. 5분 주기 실행 기준으로
+// 전체 목록이 한 바퀴 도는 시간 = 키워드 수 / KEYWORD_BATCH_SIZE * 5분.
+export const KEYWORD_BATCH_SIZE = 300; // 키워드 수보다 크면 매 실행마다 전체를 다 돎(한 바퀴 = 5분 이하)
+export const GROUP_SIZE = 2;        // 한 검색에 묶을 키워드 수(크면 큰 회사가 결과를 독차지해 작은 회사 기사가 빠짐 — 4개 테스트 시 1건까지 줄었음)
+export const CONCURRENCY = 5;       // Google News 동시 요청 수(너무 많으면 429 차단)
+export const PER_KEYWORD_LIMIT = 8; // 키워드 하나당 저장할 최대 기사 수
 
 // 카테고리 분류용 키워드 매핑 — 제목+요약에 아래 단어가 들어있으면 해당 카테고리로 태깅
 export const CATEGORY_RULES = [
