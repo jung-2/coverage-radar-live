@@ -1,0 +1,27 @@
+name: 커버리지 레이더 시세 (KIS)
+
+on:
+  schedule:
+    # 평일 09:00~15:55 KST (UTC 00:00~06:55) 5분마다 — 장 시간에만 돎(GitHub 스케줄은 밀릴 수 있음)
+    - cron: "*/5 0-6 * * 1-5"
+  workflow_dispatch: {}
+
+concurrency:
+  group: poll-prices
+  cancel-in-progress: false
+
+jobs:
+  prices:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - run: node scraper/prices.mjs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}

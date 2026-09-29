@@ -66,6 +66,7 @@ SUPABASE_URL=... SUPABASE_SERVICE_KEY=... node scraper/poll.mjs
 ```
 .github/workflows/poll-*.yml GitHub Actions 5분 주기 실행 설정(텔레그램/키워드 각각)
 scraper/poll.mjs             수집 본체 (RSS + 텔레그램 → Supabase)
+scraper/prices.mjs           KIS 시세(등락률) 수집 → price_moves (장중, 급등락 종목 표시용)
 scraper/sources.mjs          키워드 순회/검색 설정, 카테고리/감성 분류 규칙
 supabase/schema.sql          테이블 정의 + 초기 키워드 시드
 web/index.html                대시보드 페이지 (Vercel에 배포)

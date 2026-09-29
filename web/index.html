@@ -574,6 +574,7 @@ let cachedTodayKey = null, cachedYestKey = null;
 const KW_MAX_ROWS = 3000;       // 오늘+어제 기사 최대 불러올 개수(1000개씩 페이지 3번)
 const KW_SIMILAR = 0.5;         // 제목 유사도(글자 2-그램 Dice)가 이 이상이면 같은 뉴스로 묶음 — 안 묶이면 낮추고, 엉뚱한 게 묶이면 올림
 const KW_TOP_CLUSTERS = 5;      // 회사 카드에서 처음 보여줄 묶음 수(나머지는 접어둠)
+const KW_MOVER_CLUSTERS = 2;    // 급등락 종목 구역의 카드는 기사를 이만큼만 보여줌(구역이 너무 길어지지 않게, 나머지는 접힘)
 let cachedKeywordItems = [];
 
 function esc(s){
@@ -594,34 +595,153 @@ function diceSim(A, B){
 }
 const KW_SENT = {beat:["호재","--beat"], miss:["악재","--miss"], note:["주의","--note"]};
 
-function groupKeywordItems(items){
+// ── 추적 키워드 기사 중요도(규칙 방식, 2026-09-29) ─────────────────────────
+// AI 없이 제목의 단어로 "회사에 실질적 영향(material impact)이 있는 기사"인지 점수를 매김.
+// 점수: 3.5 이상 = 핵심(high), 2 = 중요(medium), 그 외 = 일반. 잡음(투자분석 글, 연예/스포츠 등)은 0 이하.
+// 규칙을 고치려면 아래 KW_RULES / KW_NOISE만 손보면 됨 — [정규식, 점수, 배지 이름, 방향(pos 호재/neg 악재/neu 중립)]
+const KW_RULES = [
+  // 리스크·악재
+  [/횡령|배임|영업정지|상장폐지|상폐|거래정지|감사의견|불성실공시|압수수색|기소|구속|과징금|리콜|화재|폭발|가동 ?중단|생산 ?중단|공급 ?차질|유출|해킹|보안사고/, 3, "리스크", "neg"],
+  [/소송|분쟁|제재|규제|관세|수출 ?통제|수출 ?규제|블랙리스트|조사 착수|적발/, 2, "규제·분쟁", "neg"],
+  // 자금조달·희석
+  [/전환사채|신주인수권|제3자배정|CB 발행|BW 발행/, 3, "증자·CB", "neg"],
+  [/유상증자|무상증자|유증/, 3, "증자", "neu"],
+  [/블록딜|오버행|보호예수 ?해제|대량 ?매도|지분.{0,8}(풀린|시장에 나온)/, 2, "물량 출회", "neg"],
+  // 수주·계약
+  [/수주|(공급|납품|개발|장기|판매|위탁|라이선스|라이센스) ?계약|양해각서|MOU 체결|낙찰|수의계약|공급 ?개시|공급 ?시작|납품 ?시작/, 3, "수주·계약", "pos"],
+  // M&A·지분
+  [/인수|합병|M&A|공개매수|경영권|최대주주 ?(변경|교체)|지분 ?(취득|매각|처분|확보|인수)|분할 ?상장|중복상장|상장 ?추진|IPO|상장설|물적분할|스핀오프/, 3, "M&A·지분", "neu"],
+  // 실적
+  [/흑자 ?전환|사상 ?최대|역대 ?최대|어닝 ?서프라이즈|깜짝 ?실적|호실적/, 3, "실적", "pos"],
+  [/적자 ?전환|어닝 ?쇼크|실적 ?쇼크|영업손실|적자 ?지속|적자 ?확대/, 3, "실적", "neg"],
+  [/잠정 ?실적|실적 ?발표|영업이익|영업익|컨센서스|가이던스|매출 ?전망|실적 ?전망|분기 ?실적|3분기|4분기/, 2, "실적", "neu"],
+  // 애널리스트
+  [/목표(주)?가.{0,10}(상향|올|높|↑)|(상향|올린).{0,6}목표(주)?가|투자의견.{0,4}상향/, 2, "목표가↑", "pos"],
+  [/목표(주)?가.{0,10}(하향|내|낮|↓)|(하향|내린|낮춘).{0,6}목표(주)?가|투자의견.{0,4}하향/, 2, "목표가↓", "neg"],
+  [/목표(주)?가/, 1, "목표가", "neu"],
+  [/(\d+조|\d{3,}억).{0,12}투자|투자.{0,12}(\d+조|\d{3,}억)|(공장|팹|fab).{0,10}(추진|건설|증설|설립)/i, 2, "투자·증설", "pos"],
+  [/급등|상한가|신고가|폭등/, 2, "급등", "pos"],
+  [/급락|하한가|신저가|폭락/, 2, "급락", "neg"],
+  // 투자·증설·기술
+  [/증설|신규 ?투자|투자 ?추진|투자 ?확대|설비 ?투자|(공장|팹|fab) ?(건설|신설|증설|설립|추진)|캐펙스|capex|양산|수율|퀄 ?테스트|퀄테스트|인증 ?(통과|획득)|승인|허가|FDA|임상|특허 ?(침해|소송)/i, 2, "투자·증설", "pos"],
+  [/가격 ?(인상|상승)|ASP|단가 ?(인상|상승)/, 2, "가격↑", "pos"],
+  [/가격 ?(인하|하락)|단가 ?(인하|하락)/, 2, "가격↓", "neg"],
+  // 주주환원
+  [/자사주|자기주식|배당|주주환원|소각/, 2, "주주환원", "pos"],
+];
+// 잡음 — 걸리면 점수를 0 이하로 눌러버림(중요한 척 하는 글/무관한 글)
+const KW_NOISE = /투자분석|주가 ?전망|추천주|종목 ?추천|리딩방|무료 ?상담|마켓딥다이브|초고수|인생을 ?바꿨|N샷|미모|각선미|화보|야구|위닝|가을야구|마작|쿠폰|경품|이벤트|봉사|기부|캠퍼스|소비자평가|대상 수상|우수협력사|운세|팁 결과/;
+// 주가가 ±5% 이상 움직였다는 기사 감지(제목 기준 — 실제 시세가 아니라 기사가 그렇게 썼다는 뜻).
+// "방향 단어 + 숫자%" 또는 "숫자% + 방향 단어"를 찾고, 제목에 주가 관련 단어가 같이 있을 때만 인정.
+// 목표가/영업이익/매출 같은 % ("목표가 20%↑")는 주가 등락이 아니므로 제외. 여러 개면 제목에서 가장 뒤에 나온 것 사용
+// (예: "5%대 급락했던 삼성전자, 배당락에도 0.9% 상승 마감" → 0.9% 상승).
+const KW_PRICE_CTX = /주가|장중|장마감|특징주|급등|급락|상한가|하한가|수급포착|애프터마켓|프리마켓|거래일/;
+const KW_UP_TEST = /^(급등|상승|↑|강세|올라|오른|\+)$/;
+const KW_NOT_PRICE = /전날|전일|지난|목표|추정|전망|영업|매출|이익|수익|증가|성장|점유|비중|지분|금리|환율|수출|물량/;
+const KW_MOVE_A = /(급등|상승|↑|강세|올라|오른|\+|급락|하락|↓|약세|내려|내린|떨어|-)\s*(\d{1,3}(?:\.\d+)?)\s*%/g;
+const KW_MOVE_B = /(\d{1,3}(?:\.\d+)?)\s*%(?:대)?\s*(?:이상|넘게)?\s*(급등|상승|↑|강세|올라|오른|급락|하락|↓|약세|내려|내린|떨어)/g;
+function kwPriceMove(t, keyword){
+  if (!KW_PRICE_CTX.test(t)) return null;
+  const upRe = KW_UP_TEST;
+  const found = [];
+  const push = (index, pct, word) => {
+    if (KW_NOT_PRICE.test(t.slice(Math.max(0, index - 10), index))) return;
+    found.push({index, pct: parseFloat(pct), up: upRe.test(word)});
+  };
+  for (const m of t.matchAll(KW_MOVE_A)) push(m.index, m[2], m[1]);
+  for (const m of t.matchAll(KW_MOVE_B)) push(m.index, m[1], m[2]);
+  if (!found.length) return null;
+  found.sort((a, b) => a.index - b.index);
+  // 제목에 여러 종목이 나오면("HPSP 7.68% 급등, 에코프로비엠 5.57% 하락") 이 회사 이름 바로 뒤에 나온 숫자를 우선,
+  // 이름 위치를 모르거나 뒤에 없으면 제목에서 가장 뒤에 나온 것
+  const at = keyword ? t.toLowerCase().indexOf(String(keyword).toLowerCase()) : -1;
+  const after = at >= 0 ? found.filter(f => f.index >= at) : [];
+  const last = after.length ? after[0] : found[found.length - 1];
+  return Math.abs(last.pct) >= 5 ? (last.up ? 1 : -1) * Math.round(last.pct * 10) / 10 : null;
+}
+function kwScoreTitle(title, keyword){
+  const t = String(title || "");
+  let best = null, hits = 0;
+  for (const [re, score, tag, pol] of KW_RULES){
+    if (re.test(t)){
+      hits++;
+      if (!best || score > best.score || (score === best.score && best.pol === "neu" && pol !== "neu")) best = {score, tag, pol};
+    }
+  }
+  // 주가 급등락(±5% 이상) — 기사 제목에 그렇게 적혀 있을 때
+  const move = kwPriceMove(t, keyword);
+  if (move !== null && (!best || best.score < 2)) best = {score: 2, tag: (move > 0 ? "급등 +" : "급락 ") + move + "%", pol: move > 0 ? "pos" : "neg"};
+  let score = best ? best.score : 0;
+  if (best && hits > 1) score += 0.5;                           // 여러 종류의 중요 단어가 겹치면 조금 더
+  if (best && /\d+(?:\.\d+)?\s*조|\d{3,}(?:,\d{3})*\s*억/.test(t)) score += 1; // 100억원 이상 규모 숫자가 나오면 더
+  if (KW_NOISE.test(t)) score = Math.min(score, 0);
+  return {score, tag: best && score > 0 ? best.tag : "", pol: best ? best.pol : "neu", move: score > 0 ? move : null};
+}
+
+// 기사 중요도 점수 → 등급: 3.5 이상 핵심, 2 이상 중요, 나머지 일반(3.5 = 금액 100억 이상이거나 여러 신호가 겹친 재료)
+const kwTier = score => score >= 3.5 ? "high" : score >= 2 ? "medium" : "normal";
+const KW_TIER_LABEL = {high:"핵심", medium:"중요"};
+const KW_POL_VAR = {pos:"--beat", neg:"--miss", neu:"--info"};
+
+// 회사(keyword_match)별로 묶고 → 회사 안에서 제목 비슷한 기사끼리 묶고 → 중요도 순으로 정렬.
+// 묶음의 대표 기사는 "점수 가장 높은 것"(같으면 최신). 여러 매체(3곳 이상)가 다룬 뉴스는 +1(큰 뉴스일 가능성).
+// 회사 순서: 핵심 → 중요 → 일반 등급 순, 같은 등급이면 최근 기사가 있는 회사가 위.
+// (KIS 시세 연동 시: 장중 급등 종목이면 여기 회사 점수에 가산하면 됨)
+// KIS 시세(price_moves 테이블, scraper/prices.mjs가 장중 5분마다 갱신): {회사(키워드) → 오늘 등락률(%)}.
+// 이 값이 있는 종목은 KIS 기준으로 ±5% 이상이면 "급등락 종목" 구역에 올라가고(오늘 기사가 없어도 카드가 뜸),
+// 5% 미만이면 기사 제목이 뭐라고 했든 급등락에서 뺌. KIS에 없는 종목(해외/테마 등)은 기사 제목 기준으로 대신함.
+const KW_MOVE_MIN = 5;
+let kisMoves = new Map();
+let kisAt = null; // 가장 최근 시세 갱신 시각
+const kisMoverCount = () => [...kisMoves.values()].filter(p => Math.abs(p) >= KW_MOVE_MIN).length;
+
+function groupKeywordItems(items, isToday){
   const byKw = new Map();
   for (const it of items){
+    if (!it._kw) it._kw = kwScoreTitle(it.title, it.keyword_match);
     if (!byKw.has(it.keyword_match)) byKw.set(it.keyword_match, []);
     byKw.get(it.keyword_match).push(it);
   }
   const groups = [];
   for (const [key, list] of byKw){
     list.sort((a,b)=> new Date(b.published_at) - new Date(a.published_at));
-    const clusters = []; // {rep, bg, members} — rep은 가장 최근 기사
+    const clusters = []; // {rep, bg, members, score}
     for (const it of list){
       const bg = bigramSet(it.title);
       const hit = clusters.find(c => diceSim(bg, c.bg) >= KW_SIMILAR);
       if (hit) hit.members.push(it); else clusters.push({rep: it, bg, members: [it]});
     }
-    groups.push({key, clusters, count: list.length, latest: list[0].published_at});
+    for (const c of clusters){
+      // 대표 = 점수 최고(같으면 최신 — members는 이미 최신순이라 처음 나온 것)
+      c.rep = c.members.reduce((best, m)=> m._kw.score > best._kw.score ? m : best, c.members[0]);
+      const nSrc = new Set(c.members.map(m=>m.source)).size;
+      c.score = c.rep._kw.score > 0 ? c.rep._kw.score + (nSrc >= 3 ? 1 : 0) : 0;
+    }
+    clusters.sort((a,b)=> (b.score - a.score) || (new Date(b.members[0].published_at) - new Date(a.members[0].published_at)));
+    // 급등락: KIS 시세가 있으면 그 값, 없으면 가장 최근에 "±5% 이상 움직였다"고 쓴 기사 제목 기준(list는 최신순)
+    const mv = list.find(it => it._kw.move != null);
+    const kis = isToday ? kisMoves.get(key) : undefined;
+    groups.push({key, clusters, count: list.length, latest: list[0].published_at, score: clusters[0].score,
+      move: kis !== undefined ? (Math.abs(kis) >= KW_MOVE_MIN ? Math.round(kis * 10) / 10 : null) : (mv ? mv._kw.move : null),
+      moveSrc: kis !== undefined ? "kis" : "news"});
   }
-  groups.sort((a,b)=> new Date(b.latest) - new Date(a.latest));
+  const rank = {high:0, medium:1, normal:2};
+  groups.sort((a,b)=> (rank[kwTier(a.score)] - rank[kwTier(b.score)]) || (new Date(b.latest) - new Date(a.latest)));
   return groups;
 }
 
 function renderKeywordCluster(c){
   const rep = c.rep;
-  const sent = KW_SENT[rep.sentiment];
-  const badge = sent ? `<span class="sig-badge sig-badge-sm" style="background:var(${sent[1]})">${sent[0]}</span>` : "";
+  let badge = "";
+  if (c.score >= 2 && rep._kw.tag){
+    badge = `<span class="sig-badge sig-badge-sm" style="background:var(${KW_POL_VAR[rep._kw.pol]||"--info"})">${esc(rep._kw.tag)}</span>`;
+  } else {
+    const sent = KW_SENT[rep.sentiment];
+    if (sent) badge = `<span class="sig-badge sig-badge-sm" style="background:var(${sent[1]})">${sent[0]}</span>`;
+  }
   const srcs = [...new Set(c.members.map(m=>m.source || "Google News"))];
   const srcText = srcs.length > 1 ? `${esc(srcs[0])} 외 ${srcs.length-1}곳` : esc(srcs[0]);
-  const others = c.members.slice(1);
+  const others = c.members.filter(m=>m!==rep);
   const moreHtml = others.length
     ? `<details class="sig-sources">
         <summary>비슷한 기사 ${others.length}건 보기</summary>
@@ -638,27 +758,64 @@ function renderKeywordCluster(c){
     </div>`;
 }
 
-function renderKeywordGroupCard(g){
-  const shown = g.clusters.slice(0, KW_TOP_CLUSTERS).map(renderKeywordCluster).join("");
-  const rest = g.clusters.slice(KW_TOP_CLUSTERS);
+function renderKeywordGroupCard(g, topN = KW_TOP_CLUSTERS){
+  const tier = kwTier(g.score);
+  const tierBadge = KW_TIER_LABEL[tier]
+    ? `<span class="sig-badge" style="background:var(${IMPACT_VAR[tier]||"--sub"})">${KW_TIER_LABEL[tier]}</span>`
+    : "";
+  const moveChip = g.move != null
+    ? `<span class="sig-badge" title="${g.moveSrc === "kis" ? "KIS 시세 기준" : "기사 제목 기준(실제 시세 아님)"}" style="background:var(${g.move > 0 ? "--beat" : "--miss"})">${g.move > 0 ? "▲ +" : "▼ "}${g.move}%</span>`
+    : "";
+  const shown = g.clusters.length
+    ? g.clusters.slice(0, topN).map(renderKeywordCluster).join("")
+    : `<div class="empty">오늘 관련 기사 없음</div>`;
+  const rest = g.clusters.slice(topN);
   const restHtml = rest.length
     ? `<details class="sig-sources"><summary>나머지 ${rest.length}건 보기</summary><div class="sig-group-items" style="margin-top:6px">${rest.map(renderKeywordCluster).join("")}</div></details>`
     : "";
   return `
     <div class="sig-group">
       <div class="sig-group-top">
+        ${tierBadge}
         <span class="sig-group-title">${esc(g.key)}</span>
+        ${moveChip}
         <span class="sig-group-count">${g.count}건</span>
-        <span class="sig-src">최근 ${kstTimeLabel(g.latest)}</span>
+        ${g.latest ? `<span class="sig-src">최근 ${kstTimeLabel(g.latest)}</span>` : ""}
       </div>
       <div class="sig-group-items">${shown}${restHtml}</div>
     </div>`;
 }
 
-function renderKeywordList(elId, items, emptyMsg){
+// 맨 위: 급등/급락(±5% 이상) 종목의 회사 카드 구역(등락률 큰 순) → 그 아래: 기존 뉴스 정리(핵심 → 중요 순,
+// 일반 기사만 있는 회사는 접어둠). 급등락 종목은 위 구역에만 나오고 아래에는 중복해서 안 나옴.
+function renderKeywordList(elId, items, emptyMsg, isToday){
   const el = document.getElementById(elId);
-  if (!items.length){ el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
-  el.innerHTML = groupKeywordItems(items).map(renderKeywordGroupCard).join("");
+  if (!items.length && !(isToday && kisMoverCount())){ el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
+  const groups = groupKeywordItems(items, isToday);
+  if (isToday){ // KIS가 급등락이라고 한 종목 중 오늘 기사가 하나도 없는 것도 카드로 추가
+    for (const [key, pct] of kisMoves){
+      if (Math.abs(pct) >= KW_MOVE_MIN && !groups.some(g=>g.key===key)){
+        groups.push({key, clusters: [], count: 0, latest: null, score: 0, move: Math.round(pct * 10) / 10, moveSrc: "kis"});
+      }
+    }
+  }
+  const movers = groups.filter(g=>g.move != null).sort((a,b)=> Math.abs(b.move) - Math.abs(a.move));
+  const others = groups.filter(g=>g.move == null);
+  const primary = others.filter(g=>kwTier(g.score) !== "normal");
+  const rest = others.filter(g=>kwTier(g.score) === "normal");
+  const moversHtml = movers.length
+    ? roundDividerHtml(`급등락 종목 (±${KW_MOVE_MIN}% 이상) · ${movers.length}개${isToday && kisAt ? ` · 시세 ${kstTimeLabel(kisAt)} 기준` : ""}`) + movers.map(g=>renderKeywordGroupCard(g, KW_MOVER_CLUSTERS)).join("")
+    : "";
+  const primaryHead = movers.length ? roundDividerHtml("뉴스 정리 (중요도순)") : "";
+  const primaryHtml = primary.length
+    ? primaryHead + primary.map(g=>renderKeywordGroupCard(g)).join("")
+    : (movers.length && !rest.length ? "" : primaryHead + `<div class="empty">눈에 띄는 재료 없음</div>`);
+  const restHtml = rest.length
+    ? `<details class="sig-low-group"><summary>일반 기사 ${rest.length}개 회사 · ${rest.reduce((n,g)=>n+g.count,0)}건 보기</summary>
+        <div class="sig-low-list">${rest.map(g=>renderKeywordGroupCard(g)).join("")}</div>
+      </details>`
+    : "";
+  el.innerHTML = moversHtml + primaryHtml + restHtml;
 }
 
 function refreshDayKeys(){
@@ -685,6 +842,18 @@ async function loadKeywordItems(){
   if (activeBriefTab === "keyword") renderActiveTab();
 }
 
+// KIS 시세 불러오기 — 오늘(KST) 갱신된 값만 씀(어제 값이 남아 있으면 무시)
+async function loadPriceMoves(){
+  refreshDayKeys();
+  const since = new Date(cachedTodayKey + "T00:00:00+09:00").toISOString();
+  const {data, error} = await sb.from("price_moves").select("keyword,pct,checked_at").gte("checked_at", since);
+  if (error) return; // 테이블이 아직 없거나 오류면 기사 제목 기준으로만 동작
+  kisMoves = new Map((data||[]).map(r => [r.keyword, Number(r.pct)]));
+  kisAt = (data||[]).reduce((m, r) => (!m || r.checked_at > m) ? r.checked_at : m, null);
+  if (activeBriefTab === "keyword") renderActiveTab();
+}
+let priceTimer = null;
+
 // 수집 한 번에 새 기사가 수백 건씩 INSERT로 들어오므로, 화면 갱신은 모아서 한 번만
 let kwRenderTimer = null;
 function addKeywordItemLive(it){
@@ -710,8 +879,8 @@ function renderActiveTab(){
     const companies = list => new Set(list.map(it=>it.keyword_match)).size;
     document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)})${today.length ? ` — ${companies(today)}개 회사 · ${today.length}건` : ""}`;
     document.getElementById("yesterday-summary").textContent = `어제 (${monthDayLabel(cachedYestKey)})${yesterday.length ? ` — ${companies(yesterday)}개 회사 · ${yesterday.length}건` : ""}`;
-    renderKeywordList("brief-today", today, "오늘 수집된 기사 없음");
-    renderKeywordList("brief-yesterday", yesterday, "기록 없음");
+    renderKeywordList("brief-today", today, "오늘 수집된 기사 없음", true);
+    renderKeywordList("brief-yesterday", yesterday, "기록 없음", false);
     return;
   }
   const today = cachedTodayClusters.filter(c=>classifyClusterTab(c)===activeBriefTab);
@@ -881,7 +1050,7 @@ async function loadStatus(){
 
 async function init(){
   renderCatPills();
-  await Promise.all([loadKeywords(), loadChannels(), loadItems(), loadClusters(), loadKeywordItems()]);
+  await Promise.all([loadKeywords(), loadChannels(), loadItems(), loadClusters(), loadKeywordItems(), loadPriceMoves()]);
   await loadStatus();
 
   // 실시간 구독 — DB에 새 행이 쓰이는 즉시 화면 반영 (수집 자체는 GitHub Actions가 5분 주기로 폴링)
@@ -898,6 +1067,14 @@ async function init(){
       if (!payload.new || payload.new.id == null) return;
       statusRows[payload.new.id] = payload.new;
       renderStatus();
+    })
+    .subscribe();
+
+  // KIS 시세는 종목 100여 개가 한꺼번에 갱신되므로 1초 모아서 한 번만 다시 불러옴
+  sb.channel("public:price_moves")
+    .on("postgres_changes", {event:"*", schema:"public", table:"price_moves"}, ()=>{
+      clearTimeout(priceTimer);
+      priceTimer = setTimeout(loadPriceMoves, 1000);
     })
     .subscribe();
 

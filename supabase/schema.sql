@@ -51,6 +51,20 @@ insert into status (id) values (1) on conflict (id) do nothing;
 alter table status drop constraint if exists singleton;
 insert into status (id) values (2) on conflict (id) do nothing;
 
+-- KIS 시세(2026-09-29): scraper/prices.mjs가 장중 5분마다 추적 키워드 종목의 전일 대비 등락률을 저장(종목당 1행, 덮어씀).
+-- 화면(추적 키워드 탭)이 ±5% 이상 종목을 "급등락 종목" 구역에 올릴 때 씀. 이미 만들어진 DB에서는 SQL Editor에서 한 번 실행해야 함.
+create table if not exists price_moves (
+  keyword text primary key,
+  code text,
+  pct numeric,
+  price numeric,
+  checked_at timestamptz default now()
+);
+alter table price_moves enable row level security;
+drop policy if exists "price_moves public read" on price_moves;
+create policy "price_moves public read" on price_moves for select using (true);
+alter publication supabase_realtime add table price_moves;
+
 -- 키워드 로테이션 커서 (poll 스크립트 전용, 매 실행마다 다음 배치로 이동)
 create table if not exists poll_cursor (
   id int primary key default 1,
