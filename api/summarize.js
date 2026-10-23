@@ -65,10 +65,14 @@
 import { createClient } from "@supabase/supabase-js";
 
 const MODEL = "claude-haiku-4-5-20251001";
-const MAX_ITEMS = 75;               // 한 배치당 분류할 최대 신규 항목 수(비용/토큰 제한용 + 응답 길이 제한용)
-                                     // (2026-09-27 축소: 150개는 밀린 게 많을 때 한 번에 프롬프트/응답이 너무 커져서
-                                     // 모델이 emit_updates 스키마를 못 맞추고 형식 오류로 실패하는 경우가 있었음)
-const EXTEND_BUFFER = 200;          // 배치 경계가 같은 added_at 타임스탬프 그룹을 자르지 않도록 여유로 더 가져오는 개수
+const MAX_ITEMS = 40;               // 한 배치당 분류할 최대 신규 항목 수(비용/토큰 제한용 + 응답 길이 제한용)
+                                     // (2026-09-27 150→75, 2026-10-23 75→40: 배치가 크면 응답이 길어져서 한 번에
+                                     // 1~2분씩 걸리고 형식 오류도 잦았음 — 작게 끊어서 빨리빨리 여러 번 처리하는 게 나음)
+const SCAN_LIMIT = 1000;            // 커서 이후 항목을 훑어볼 최대 개수(url/시각만 가볍게 읽음 — fetchNextBatch 참고)
+const PROMPT_SUMMARY_CHARS = 400;   // 클러스터링 프롬프트에 같이 보여줄 본문 길이(2026-10-23 추가 — 예전엔 앞 60자 제목만 보여줘서
+                                     // 리포트 숫자를 AI가 아예 못 봤음)
+const SPLIT_MIN_CHARS = 300;        // 이보다 짧은 텔레그램 글은 "뉴스정리" 분리 후보에서 뺌(짧은 글은 쪼갤 게 없음)
+const SPLIT_TEXT_CHARS = 1500;      // 분리 단계에 보여줄 원문 최대 길이(원문 3000자 × 수십 건이면 프롬프트가 너무 커짐)
 const MAX_EXISTING_CLUSTERS = 80;   // 프롬프트에 보여줄 "오늘 진행 중인 클러스터" 최대 개수(이보다 많아도
                                      // 아래 중복 방지 안전장치가 전체 클러스터를 대상으로 한 번 더 검사함)
 const MAX_TOKENS = 24000;           // 리포트 숫자 요약이 길어질 수 있어 넉넉히 잡음
@@ -79,7 +83,9 @@ const MAX_BACKLOG_MS = 48 * 60 * 60 * 1000; // (2026-09-27 추가) 커서가 이
                                      // 오래된 거 순서대로 다 처리해야 최근 걸로 넘어가는 구조라 오늘/어제가 계속 안 보이는
                                      // 문제가 있었음 — 48시간(이틀)보다 오래 밀린 백로그는 그냥 버리고 최근 것부터 처리함.
 const MAX_BATCHES = 20;             // 한 번 호출에 처리할 배치 수 안전장치(주로 아래 시간 예산이 먼저 걸림)
-const TIME_BUDGET_MS = 180 * 1000;  // Vercel 함수 제한(300초) 안에서 안전하게 멈추기 위한 시간 예산
+const TIME_BUDGET_MS = 60 * 1000;   // 이 시간이 지나면 다음 배치를 새로 시작하지 않고 응답함 — 밀린 게 남으면 화면이 자동으로 이어서 호출
+                                     // (2026-10-23 180→60초: 한 호출이 오래 걸릴수록 브라우저/네트워크 쪽에서 끊기거나("Failed to fetch")
+                                     // 300초 강제 종료에 걸릴 위험이 커짐 — 짧게 자주 응답하는 게 안정적이고 진행 상황도 바로 보임)
                                      // (2026-09-27 축소: 240초는 이 체크 통과 직후 시작한 배치 하나가 오래 걸리면
                                      // (텔레그램 분리+클러스터링 합쳐서 배치당 1~2분씩 걸릴 수 있음) 실제로 300초를
                                      // 넘겨버려서 Vercel이 함수를 강제 종료(FUNCTION_INVOCATION_TIMEOUT)하는 경우가
@@ -293,40 +299,63 @@ const TELEGRAM_SPLIT_TOOL = {
   },
 };
 
+// Claude API 호출 + 일시적 오류 자동 재시도(2026-10-23 추가) — 예전엔 Anthropic 쪽이 잠깐 바쁘거나(529 overloaded)
+// 요청 한도(429)에 걸리면 그 즉시 전체 실행이 오류로 끝나서 "업데이트"를 다시 눌러야 했음.
+// 이런 일시적 오류는 몇 초 기다렸다 최대 2번 더 시도함. 그 외 오류(400 등)는 바로 던짐.
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 529]);
+async function callClaude(apiKey, body) {
+  const waits = [3000, 8000];
+  for (let attempt = 0; ; attempt++) {
+    let apiRes;
+    try {
+      apiRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      if (attempt < waits.length) { await new Promise(r => setTimeout(r, waits[attempt])); continue; }
+      throw new Error(`Claude API 연결 실패: ${err.message}`);
+    }
+    if (apiRes.ok) return apiRes.json();
+    const errBody = await apiRes.text();
+    if (RETRYABLE_STATUS.has(apiRes.status) && attempt < waits.length) {
+      console.error(`Claude API ${apiRes.status} — ${waits[attempt] / 1000}초 후 재시도`);
+      await new Promise(r => setTimeout(r, waits[attempt]));
+      continue;
+    }
+    throw new Error(`Claude API 오류 ${apiRes.status}: ${errBody.slice(0, 500)}`);
+  }
+}
+
 async function splitTelegramDigests(items, { ANTHROPIC_API_KEY, MODEL }) {
   // 텔레그램 출처이면서 원문이 어느 정도 긴(여러 뉴스가 섞였을 가능성 있는) 항목만 후보로 삼음 —
   // 짧은 단신까지 매번 AI에 물어보면 비용만 늘고 어차피 쪼갤 게 없음.
   const candidates = [];
   items.forEach((it, i) => {
     const isTelegram = (it.source || "").startsWith("텔레그램:");
-    if (isTelegram && (it.summary || "").length > 150) candidates.push({ it, idx: i + 1 });
+    if (isTelegram && (it.summary || "").length > SPLIT_MIN_CHARS) candidates.push({ it, idx: i + 1 });
   });
   if (!candidates.length) return items;
 
-  const lines = candidates.map(({ it, idx }) => `${idx}. ${it.summary}`).join("\n\n");
+  const lines = candidates.map(({ it, idx }) => `${idx}. ${it.summary.slice(0, SPLIT_TEXT_CHARS)}`).join("\n\n");
   const prompt =
     `다음은 텔레그램 채널에 올라온 글들이다(번호 매겨져 있음). 이 중 "여러 개의 서로 다른 뉴스/이슈가 한 번에 정리되어" ` +
     `올라온 글(뉴스정리·데일리 브리핑 스타일)이 있으면 split_telegram_digests 도구로 그 글들만 개별 뉴스 단위로 나눠서 반환하라. ` +
     `하나의 이슈만 다루는 글은 결과에 포함시키지 말 것.\n\n[텔레그램 원문]\n${lines}`;
 
   try {
-    const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 8000,
-        tools: [TELEGRAM_SPLIT_TOOL],
-        tool_choice: { type: "tool", name: "split_telegram_digests" },
-        messages: [{ role: "user", content: prompt }],
-      }),
+    const apiJson = await callClaude(ANTHROPIC_API_KEY, {
+      model: MODEL,
+      max_tokens: 8000,
+      tools: [TELEGRAM_SPLIT_TOOL],
+      tool_choice: { type: "tool", name: "split_telegram_digests" },
+      messages: [{ role: "user", content: prompt }],
     });
-    if (!apiRes.ok) { console.error("텔레그램 분리 호출 실패:", apiRes.status); return items; }
-    const apiJson = await apiRes.json();
     const toolUse = (apiJson.content || []).find(b => b.type === "tool_use" && b.name === "split_telegram_digests");
     if (!toolUse || !Array.isArray(toolUse.input?.splits)) return items;
 
@@ -341,9 +370,9 @@ async function splitTelegramDigests(items, { ANTHROPIC_API_KEY, MODEL }) {
     const newItems = [];
     items.forEach((it, i) => {
       const stories = splitMap.get(i + 1);
-      if (!stories) { newItems.push(it); return; }
-      for (const st of stories) {
-        if (!st.headline) continue;
+      const pieces = (stories || []).filter(st => st && typeof st.headline === "string" && st.headline.trim());
+      if (!pieces.length) { newItems.push(it); return; } // 쪼갠 결과가 비면 원본 그대로(글이 통째로 사라지지 않게)
+      for (const st of pieces) {
         newItems.push({ ...it, title: st.headline.trim(), summary: (st.detail || "").trim() });
       }
     });
@@ -354,29 +383,69 @@ async function splitTelegramDigests(items, { ANTHROPIC_API_KEY, MODEL }) {
   }
 }
 
-// items 테이블에서 커서(added_at) 이후로 다음 배치를 가져옴.
-// 같은 poll 실행에서 들어온 행들은 added_at이 완전히 같을 수 있어서(한 트랜잭션 안의 now()),
-// 딱 MAX_ITEMS에서 끊으면 같은 타임스탬프 그룹이 배치 중간에 잘릴 위험이 있음 — 그러면 커서를
-// "마지막 처리 항목의 added_at"으로 전진시킬 때, 잘린 나머지 절반이 다음 조회에서 조용히
-// 스킵될 수 있음. 그래서 여유(EXTEND_BUFFER)를 더 가져온 뒤, 타임스탬프가 바뀌는 지점까지 확장해서 끊음.
+// items 테이블에서 커서(added_at) 이후로 다음 배치를 가져옴(2026-10-23 다시 짬).
+// poll.mjs는 한 번 실행에 새 글을 한꺼번에 넣어서, 같은 실행에서 들어온 행들은 added_at이 완전히 같음.
+// 예전 방식의 문제 두 가지를 고침:
+//  (1) 같은 added_at 묶음을 중간에 안 자르려고 배치를 늘려 잡다 보니, 수집이 한동안 밀렸다 한꺼번에
+//      들어오면 배치 하나가 수백 건이 돼서 AI 응답이 잘리거나 형식 오류로 계속 실패 → 커서가 영영
+//      안 움직이고 매번 같은 데서 막혔음.
+//  (2) 커서를 JS Date로 바꾸면서 DB 시각의 마이크로초가 잘려서, 마지막 묶음이 다음 호출 때 또
+//      조회되고 또 요약됐음(같은 글이 카드에 중복으로 붙고 AI 호출도 낭비).
+// 지금은: 커서 이후 항목을 url/시각만 가볍게 훑고, 이미 클러스터에 들어간 url은 빼고, 남은 것 중
+// 앞에서부터 MAX_ITEMS개만 집음. 커서는 "전부 처리 끝난 묶음"까지만 DB 원래 문자열 그대로 전진함 —
+// 큰 묶음은 여러 호출에 나눠서 처리되고, 중간에 죽어도 이미 처리한 글은 다시 처리하지 않음.
 async function fetchNextBatch(sb, cursorIso) {
-  const fetchSize = MAX_ITEMS + EXTEND_BUFFER;
-  const { data, error } = await sb
+  const { data: scan, error } = await sb
     .from("items")
-    .select("title, url, source, summary, category, sentiment, importance, ticker, published_at, added_at")
+    .select("url, added_at, published_at")
     .eq("source_type", "telegram") // 추적 키워드 뉴스는 AI 요약 없이 화면에서 바로 정리함(2026-09-29) — 텔레그램만 처리
     .gt("added_at", cursorIso)
     .order("added_at", { ascending: true })
-    .limit(fetchSize);
+    .order("url", { ascending: true })
+    .limit(SCAN_LIMIT);
   if (error) throw error;
-  if (!data || !data.length) return { batch: [], noMoreAfterThis: true };
+  if (!scan || !scan.length) return { batch: [], nextCursor: cursorIso, noMoreAfterThis: true };
 
-  const dbExhausted = data.length < fetchSize; // DB에 이보다 더 남은 게 없다는 뜻
-  let cut = Math.min(MAX_ITEMS, data.length);
-  while (cut < data.length && data[cut].added_at === data[cut - 1].added_at) cut++;
-  const batch = data.slice(0, cut);
-  const noMoreAfterThis = dbExhausted && cut === data.length;
-  return { batch, noMoreAfterThis };
+  // 이미 클러스터에 들어간 url — 그 글이 들어간 클러스터는 updated_at이 그 글 게시 시각 이후라서 이걸로 범위를 좁힘
+  const minPublished = scan.reduce((m, r) => (r.published_at < m ? r.published_at : m), scan[0].published_at);
+  const { data: doneClusters, error: doneErr } = await sb
+    .from("clusters")
+    .select("sources")
+    .gte("updated_at", minPublished);
+  if (doneErr) throw doneErr;
+  const done = new Set();
+  for (const c of doneClusters || []) for (const src of c.sources || []) if (src && src.url) done.add(src.url);
+
+  // added_at 묶음 단위로 나눔. 훑은 게 SCAN_LIMIT에 꽉 찼으면 마지막 묶음은 잘렸을 수 있으니 이번엔 안 건드림
+  const groups = [];
+  for (const r of scan) {
+    const last = groups[groups.length - 1];
+    if (last && last.at === r.added_at) last.rows.push(r); else groups.push({ at: r.added_at, rows: [r] });
+  }
+  const scanFull = scan.length >= SCAN_LIMIT;
+  if (scanFull && groups.length > 1) groups.pop();
+
+  const pickedUrls = [];
+  let nextCursor = cursorIso;
+  let more = scanFull;
+  for (const g of groups) {
+    const pending = g.rows.filter(r => !done.has(r.url));
+    const room = MAX_ITEMS - pickedUrls.length;
+    if (pending.length > room) { pickedUrls.push(...pending.slice(0, room).map(r => r.url)); more = true; break; }
+    pickedUrls.push(...pending.map(r => r.url));
+    nextCursor = g.at; // 이 묶음은 이번 배치까지 하면 전부 처리됨
+    if (pickedUrls.length >= MAX_ITEMS) { more = more || g !== groups[groups.length - 1]; break; }
+  }
+  if (!pickedUrls.length) return { batch: [], nextCursor, noMoreAfterThis: !more };
+
+  const { data: rows, error: rowsErr } = await sb
+    .from("items")
+    .select("title, url, source, summary, category, sentiment, importance, ticker, published_at, added_at")
+    .in("url", pickedUrls);
+  if (rowsErr) throw rowsErr;
+  const order = new Map(pickedUrls.map((u, i) => [u, i]));
+  const batch = (rows || []).sort((x, y) => order.get(x.url) - order.get(y.url));
+  return { batch, nextCursor, noMoreAfterThis: !more };
 }
 
 export default async function handler(req, res) {
@@ -399,11 +468,15 @@ export default async function handler(req, res) {
   // 기사(sources)와 요약 메모(updates)에 run_at으로 붙여서, 화면이 누른 순간별로 구분해서 보여줌.
   // 값이 없거나 이상하면(옛날 화면 캐시 등) 이번 호출 시작 시각으로 대신함.
   let runAt = new Date();
+  // 화면이 "밀린 게 남아서 자동으로 이어서" 부르는 호출이면 true(2026-10-23 추가) — 이건 사람이 연타한 게
+  // 아니라서 연타 방지 쿨다운을 안 걸음. 예전엔 이어서 부를 때마다 쿨다운(30초)에 걸려서 매번 32초씩 그냥 기다렸음.
+  let isContinuation = false;
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     const d = new Date(body && body.run_at);
     const age = Date.now() - d.getTime();
     if (!isNaN(d) && age >= -60 * 1000 && age <= 6 * 3600 * 1000) runAt = d;
+    isContinuation = !!(body && body.continuation);
   } catch { /* 본문이 없거나 JSON이 아니면 무시 */ }
   const runAtIso = runAt.toISOString();
 
@@ -418,7 +491,7 @@ export default async function handler(req, res) {
       .limit(1)
       .maybeSingle();
 
-    if (lastRun?.created_at) {
+    if (lastRun?.created_at && !isContinuation) {
       const elapsed = Date.now() - new Date(lastRun.created_at).getTime();
       if (elapsed < COOLDOWN_MS) {
         res.status(429).json({ error: `너무 빠른 요청임. ${Math.ceil((COOLDOWN_MS - elapsed) / 1000)}초 후 다시 시도해줘.` });
@@ -426,34 +499,41 @@ export default async function handler(req, res) {
       }
     }
 
-    let startCursor = lastRun?.period_to
-      ? new Date(lastRun.period_to)
-      : new Date(Date.now() - FALLBACK_WINDOW_MS);
+    // 커서는 DB에서 받은 문자열 그대로 씀(2026-10-23) — JS Date로 바꾸면 마이크로초가 잘려서 같은 글을 또 처리했음
+    let startCursor = lastRun?.period_to || new Date(Date.now() - FALLBACK_WINDOW_MS).toISOString();
 
     // 커서가 너무 옛날(48시간 초과)이면 강제로 당김 — 그 사이 밀려있던 백로그는 영영 스킵됨(의도된 동작)
     const minAllowedCursor = new Date(Date.now() - MAX_BACKLOG_MS);
-    const skippedOldBacklog = startCursor < minAllowedCursor;
-    if (skippedOldBacklog) startCursor = minAllowedCursor;
+    const skippedOldBacklog = new Date(startCursor) < minAllowedCursor;
+    if (skippedOldBacklog) startCursor = minAllowedCursor.toISOString();
 
-    // 2) 커서 이후로 밀린 게 남아있는 한(시간/횟수 예산 안에서) 150개씩 끊어서 이어서 처리
+    // 2) 커서 이후로 밀린 게 남아있는 한(시간/횟수 예산 안에서) MAX_ITEMS개씩 끊어서 이어서 처리
     let cursor = startCursor;
     let totalProcessed = 0;
     let totalNewClusters = 0;
     const touchedClusterIds = new Set();
     let batchesRun = 0;
     let stoppedReason = "caught_up"; // caught_up | time_budget | batch_cap
+    let cursorMoved = false;
 
     while (true) {
       if (batchesRun >= MAX_BATCHES) { stoppedReason = "batch_cap"; break; }
       if (Date.now() - startedAt > TIME_BUDGET_MS) { stoppedReason = "time_budget"; break; }
 
-      const { batch: rawBatch, noMoreAfterThis } = await fetchNextBatch(sb, cursor.toISOString());
-      if (!rawBatch.length) { stoppedReason = "caught_up"; break; }
+      const fetched = await fetchNextBatch(sb, cursor);
+      let { noMoreAfterThis } = fetched;
+      let nextCursor = fetched.nextCursor;
+      if (!fetched.batch.length) {
+        // 커서 뒤에 있는 게 전부 이미 처리된 글이면 커서만 앞으로 옮기고 계속 봄
+        const moved = nextCursor !== cursor;
+        if (moved) { cursor = nextCursor; cursorMoved = true; }
+        if (noMoreAfterThis || !moved) { stoppedReason = "caught_up"; break; }
+        continue;
+      }
 
       // 텔레그램 "뉴스정리" 글(여러 뉴스가 한 번에 섞여있는 글)이 있으면 개별 뉴스 단위로
       // 쪼갬(2026-09-23 추가) — 쪼개진 뒤에는 이후 로직에서 완전히 일반 항목과 동일하게 처리됨.
-      // items.length가 늘어나므로 cursor 전진(마지막 항목의 added_at)에는 영향 없음(원본 added_at 유지).
-      const items = await splitTelegramDigests(rawBatch, { ANTHROPIC_API_KEY, MODEL });
+      let items = await splitTelegramDigests(fetched.batch, { ANTHROPIC_API_KEY, MODEL });
 
       // 이번 배치에 실제로 섞여있는 기사 날짜(들) — 보통은 하루지만, 백로그가 자정을 넘겨서
       // 처리되면 여러 날짜가 같이 들어있을 수 있음. 아래 조회들은 전부 이 날짜(들) 기준으로 함.
@@ -464,24 +544,31 @@ export default async function handler(req, res) {
       // 프롬프트에는 최근 갱신순 MAX_EXISTING_CLUSTERS개까지만 보여줌(토큰 비용 때문).
       const { data: existingClustersRaw, error: exErr } = await sb
         .from("clusters")
-        .select("id, headline, impact, targets, why, sources, updates")
+        .select("id, headline, impact, targets, why, sources, updates, updated_at")
         .in("day_key", batchDayKeys)
         .order("updated_at", { ascending: false })
         .limit(MAX_EXISTING_CLUSTERS);
       if (exErr) throw exErr;
       const existingClusters = existingClustersRaw || [];
 
-      const newLines = items.map((it, i) => {
-        const cat = CAT_LABEL[it.category] || it.category || "기타";
-        const tag = it.ticker ? `[${it.ticker}] ` : "";
-        return `${i + 1}. (${cat}) ${tag}${it.title} — ${it.source || "출처불명"}`;
-      }).join("\n");
-
+      // AI가 응답을 잘라먹거나(max_tokens) 형식을 못 맞추면(2026-10-23 추가) 예전엔 바로 오류로 끝나고 커서도
+      // 안 움직여서, 다시 눌러도 같은 배치에서 계속 똑같이 실패했음. 지금은 배치를 반으로 줄여서 다시 시도하고,
+      // 줄인 만큼은 커서를 안 옮김(다음 배치에서 처리됨 — 이미 처리한 글은 fetchNextBatch가 알아서 건너뜀).
       const existingLines = existingClusters.length
         ? existingClusters.map((c, i) => `${i + 1}. ${c.headline} [${(c.targets || []).join(", ") || "-"}]`).join("\n")
         : "(오늘 진행 중인 클러스터 없음)";
+      let toolUse = null;
+      while (true) {
+        // 텔레그램 제목은 본문 앞 60자를 자른 거라 숫자가 거의 안 들어있음 — 본문 앞부분을 같이 보여줌(2026-10-23)
+        const newLines = items.map((it, i) => {
+          const cat = CAT_LABEL[it.category] || it.category || "기타";
+          const tag = it.ticker ? `[${it.ticker}] ` : "";
+          const text = String(it.summary || it.title || "").replace(/\s+/g, " ").trim().slice(0, PROMPT_SUMMARY_CHARS);
+          const head = text.startsWith(String(it.title || "").replace(/…$/, "")) ? text : `${it.title} | ${text}`;
+          return `${i + 1}. (${cat}) ${tag}${head} — ${it.source || "출처불명"}`;
+        }).join("\n");
 
-      const prompt = `당신은 반도체·AI인프라 섹터를 커버하는 증권사 애널리스트를 돕는 리서치 어시스턴트입니다.
+        const prompt = `당신은 반도체·AI인프라 섹터를 커버하는 증권사 애널리스트를 돕는 리서치 어시스턴트입니다.
 
 [오늘 진행 중인 클러스터] (총 ${existingClusters.length}개)
 ${existingLines}
@@ -535,37 +622,32 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
 
 모든 유형 공통: 순한글로만 작성(한자 금지)`;
 
-      const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
+        const apiJson = await callClaude(ANTHROPIC_API_KEY, {
           model: MODEL,
           max_tokens: MAX_TOKENS,
           tools: [UPDATE_TOOL],
           tool_choice: { type: "tool", name: "emit_updates" },
           messages: [{ role: "user", content: prompt }],
-        }),
-      });
+        });
 
-      if (!apiRes.ok) {
-        const errBody = await apiRes.text();
-        throw new Error(`Claude API 오류 ${apiRes.status}: ${errBody.slice(0, 500)}`);
-      }
+        let failMsg = null;
+        if (apiJson.stop_reason === "max_tokens") {
+          failMsg = `응답이 너무 길어서 중간에 잘림 (처리하려던 항목 ${items.length}건)`;
+        } else {
+          toolUse = (apiJson.content || []).find(b => b.type === "tool_use" && b.name === "emit_updates");
+          if (!toolUse || !toolUse.input || !Array.isArray(toolUse.input.updates)) {
+            failMsg = `Claude가 구조화된 분류 결과를 반환하지 않음 (형식 오류, stop_reason: ${apiJson.stop_reason || "알수없음"})`;
+          }
+        }
+        if (!failMsg) break;
 
-      const apiJson = await apiRes.json();
-      if (apiJson.stop_reason === "max_tokens") {
-        throw new Error(
-          `응답이 너무 길어서 중간에 잘림 (처리하려던 항목 ${items.length}건). ` +
-          `MAX_ITEMS를 더 줄이거나 MAX_TOKENS를 더 늘려야 함.`
-        );
-      }
-      const toolUse = (apiJson.content || []).find(b => b.type === "tool_use" && b.name === "emit_updates");
-      if (!toolUse || !toolUse.input || !Array.isArray(toolUse.input.updates)) {
-        throw new Error(`Claude가 구조화된 분류 결과를 반환하지 않음 (형식 오류, stop_reason: ${apiJson.stop_reason || "알수없음"})`);
+        const urls = [...new Set(items.map(it => it.url))];
+        if (urls.length <= 1) throw new Error(failMsg);
+        const keep = new Set(urls.slice(0, Math.ceil(urls.length / 2)));
+        console.error(`${failMsg} — 배치를 ${urls.length}건 → ${keep.size}건으로 줄여서 다시 시도`);
+        items = items.filter(it => keep.has(it.url));
+        nextCursor = cursor;      // 뒤쪽 절반은 아직 안 했으니 커서는 그대로
+        noMoreAfterThis = false;
       }
 
       // 모델이 반환한 update들을 "기존 클러스터로 합칠 그룹"과 "신규 클러스터 후보"로 나눠서 모음.
@@ -639,7 +721,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
       //     대상으로 다시 검사 — 모델에게 안 보였던 기존 클러스터와 겹치면 새로 만들지 않고 그쪽으로 합침
       const { data: allTodayClustersRaw, error: allErr } = await sb
         .from("clusters")
-        .select("id, headline, impact, targets, why, sources, updates")
+        .select("id, headline, impact, targets, why, sources, updates, updated_at")
         .in("day_key", batchDayKeys);
       if (allErr) throw allErr;
       const allTodayClusters = allTodayClustersRaw || [];
@@ -739,7 +821,8 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
 
       totalProcessed += items.length;
       batchesRun++;
-      cursor = new Date(items[items.length - 1].added_at);
+      if (nextCursor !== cursor) cursorMoved = true;
+      cursor = nextCursor;
 
       // 배치 하나 끝날 때마다 진행 지점(커서)을 바로 저장(2026-09-28 추가) — 예전엔 전체 실행이
       // 끝까지 성공해야만 맨 마지막에 한 번 저장됐어서, 다음 배치에서 타임아웃/에러로 이번 실행이
@@ -749,8 +832,8 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
       // 다음 실행이 절대 다시 안 하도록 함. 체크포인트 저장 자체가 실패해도(드문 경우) 이번 실행은
       // 계속 진행 — 맨 마지막에 정상 완료되면 어차피 최종 요약 기록이 다시 저장됨.
       const { error: checkpointErr } = await sb.from("briefings").insert({
-        period_from: startCursor.toISOString(),
-        period_to: cursor.toISOString(),
+        period_from: startCursor,
+        period_to: cursor,
         item_count: totalProcessed,
         content: `(진행중) ${totalProcessed}건 처리(배치 ${batchesRun}개)`,
         signals: [],
@@ -763,10 +846,18 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
     // 3) 실행 기록 저장 — period_to가 "실제로 처리 완료한 지점"의 커서가 되어 다음 호출의 시작점이 됨.
     //    이번 호출에서 하나도 처리 못 했으면(커서가 안 움직였으면) 굳이 기록을 새로 남기지 않음.
     if (totalProcessed === 0) {
+      // 새 글은 없었지만 이미 처리된 글을 건너뛰느라 커서가 움직였으면 그 위치는 저장해 둠(다음에 또 훑지 않게)
+      if (cursorMoved) {
+        const { error: mvErr } = await sb.from("briefings").insert({
+          period_from: startCursor, period_to: cursor, item_count: 0,
+          content: "새로 쌓인 글 없음(이미 처리한 글 건너뜀)", signals: [],
+        });
+        if (mvErr) console.error("커서 저장 실패(무시):", mvErr.message);
+      }
       res.status(200).json({
         skipped: true,
         message: "마지막 브리핑 이후로 새로 쌓인 기사가 없음.",
-        cursor: startCursor.toISOString(),
+        cursor: startCursor,
       });
       return;
     }
@@ -775,8 +866,8 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
     const { error: logErr } = await sb
       .from("briefings")
       .insert({
-        period_from: startCursor.toISOString(),
-        period_to: cursor.toISOString(),
+        period_from: startCursor,
+        period_to: cursor,
         item_count: totalProcessed,
         content: `${totalProcessed}건 처리(배치 ${batchesRun}개) · 새 클러스터 ${totalNewClusters}개 · 기존 클러스터 갱신 ${touchedClusterIds.size}건` +
           (hasMoreBacklog ? ` · 아직 밀린 게 남음(${stoppedReason === "time_budget" ? "시간 예산 초과" : "배치 수 한도 초과"}) — 다시 눌러서 이어서 처리 필요` : "") +
