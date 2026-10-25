@@ -1,7 +1,7 @@
 // Vercel 서버리스 함수 — 대시보드의 "브리핑 생성" 버튼이 호출하는 엔드포인트.
 // 서비스 키/API 키는 전부 서버사이드 환경변수로만 쓰고, 브라우저에는 절대 노출되지 않음.
 //
-// 방식: 새로 쌓인 기사/텔레그램 항목을 Claude에게 보여줄 때, "오늘 이미 진행 중인 클러스터 목록"도
+// 방식: 새로 쌓인 기사/텔레그램 항목을 AI(Gemini)에게 보여줄 때, "오늘 이미 진행 중인 클러스터 목록"도
 // 함께 보여줘서 같은 주제면 기존 클러스터에 합치고, 새로운 주제면 새 클러스터를 만들게 함
 // (tool-use로 구조화된 JSON 강제). 즉 "브리핑 생성"을 하루에 여러 번 눌러도 같은 주제 카드는
 // 계속 갱신되고, 그 안에 시간별 업데이트 이력이 쌓임 — 완전히 새로 쌓이는 목록이 아님.
@@ -57,14 +57,18 @@
 //
 // 필요한 Vercel 환경변수(Settings → Environment Variables):
 //   SUPABASE_URL, SUPABASE_SERVICE_KEY  — GitHub Actions 시크릿과 같은 값
-//   ANTHROPIC_API_KEY                   — console.anthropic.com(=platform.claude.com) 에서 발급받은 API 키
+//   GEMINI_API_KEY                      — aistudio.google.com/apikey 에서 발급받은 키(무료 등급)
+//
+// AI 모델 변경(2026-10-25): 비용 때문에 Claude Haiku → Google Gemini 무료 등급으로 바꿈.
+// 무료 등급은 분당/하루 호출 횟수 한도가 있음(하루 한도는 미국 서부 자정 = 한국 오후 4~5시에 초기화).
+// 요약 품질이 아쉬우면 MODEL만 "gemini-3.8-flash"로 바꾸면 됨(대신 무료 한도가 더 빡빡함).
 //
 // 참고: vercel.json에 이 함수의 maxDuration을 300초(Vercel 무료 플랜 최대치)로 설정해둬야
 // 백로그가 많이 밀렸을 때 여러 배치를 이어서 처리할 시간이 확보됨.
 
 import { createClient } from "@supabase/supabase-js";
 
-const MODEL = "claude-haiku-4-5-20251001";
+const MODEL = "gemini-3.5-flash-lite";
 const MAX_ITEMS = 40;               // 한 배치당 분류할 최대 신규 항목 수(비용/토큰 제한용 + 응답 길이 제한용)
                                      // (2026-09-27 150→75, 2026-10-23 75→40: 배치가 크면 응답이 길어져서 한 번에
                                      // 1~2분씩 걸리고 형식 오류도 잦았음 — 작게 끊어서 빨리빨리 여러 번 처리하는 게 나음)
@@ -75,7 +79,8 @@ const SPLIT_MIN_CHARS = 300;        // 이보다 짧은 텔레그램 글은 "뉴
 const SPLIT_TEXT_CHARS = 1500;      // 분리 단계에 보여줄 원문 최대 길이(원문 3000자 × 수십 건이면 프롬프트가 너무 커짐)
 const MAX_EXISTING_CLUSTERS = 80;   // 프롬프트에 보여줄 "오늘 진행 중인 클러스터" 최대 개수(이보다 많아도
                                      // 아래 중복 방지 안전장치가 전체 클러스터를 대상으로 한 번 더 검사함)
-const MAX_TOKENS = 24000;           // 리포트 숫자 요약이 길어질 수 있어 넉넉히 잡음
+const MAX_TOKENS = 40000;           // 리포트 숫자 요약이 길어질 수 있어 넉넉히 잡음
+                                     // (2026-10-25 24000→40000: Gemini는 내부 생각 토큰도 이 한도에 포함됨)
 const COOLDOWN_MS = 30 * 1000;      // 연타 방지용 최소 간격
 const FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000; // 이전 실행 기록이 없을 때 기본 조회 범위(24시간)
 const MAX_BACKLOG_MS = 48 * 60 * 60 * 1000; // (2026-09-27 추가) 커서가 이보다 더 옛날이면 강제로 이 시점까지 당겨서 시작함.
@@ -299,40 +304,53 @@ const TELEGRAM_SPLIT_TOOL = {
   },
 };
 
-// Claude API 호출 + 일시적 오류 자동 재시도(2026-10-23 추가) — 예전엔 Anthropic 쪽이 잠깐 바쁘거나(529 overloaded)
-// 요청 한도(429)에 걸리면 그 즉시 전체 실행이 오류로 끝나서 "업데이트"를 다시 눌러야 했음.
-// 이런 일시적 오류는 몇 초 기다렸다 최대 2번 더 시도함. 그 외 오류(400 등)는 바로 던짐.
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 529]);
-async function callClaude(apiKey, body) {
+// Gemini API 호출 + 일시적 오류 자동 재시도(2026-10-23 추가, 2026-10-25 Claude→Gemini로 변경) — 서버가
+// 잠깐 바쁘거나(503) 분당 요청 한도(429)에 걸리면 몇 초 기다렸다 최대 2번 더 시도함. 그 외 오류(400 등)는 바로 던짐.
+// 도구(function) 하나를 반드시 호출하게 강제해서(mode: ANY) 구조화된 JSON 결과만 받음 — Claude 때의 tool_choice와 같은 역할.
+// 반환값: { args(도구 입력값 객체, 없으면 null), finishReason }
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+async function callGemini(apiKey, tool, prompt, maxTokens) {
+  const body = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    tools: [{ functionDeclarations: [{
+      name: tool.name,
+      description: tool.description,
+      parametersJsonSchema: tool.input_schema,
+    }] }],
+    toolConfig: { functionCallingConfig: { mode: "ANY", allowedFunctionNames: [tool.name] } },
+    generationConfig: { maxOutputTokens: maxTokens },
+  };
   const waits = [3000, 8000];
   for (let attempt = 0; ; attempt++) {
     let apiRes;
     try {
-      apiRes = await fetch("https://api.anthropic.com/v1/messages", {
+      apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
+        headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify(body),
       });
     } catch (err) {
       if (attempt < waits.length) { await new Promise(r => setTimeout(r, waits[attempt])); continue; }
-      throw new Error(`Claude API 연결 실패: ${err.message}`);
+      throw new Error(`Gemini API 연결 실패: ${err.message}`);
     }
-    if (apiRes.ok) return apiRes.json();
+    if (apiRes.ok) {
+      const json = await apiRes.json();
+      const cand = (json.candidates || [])[0] || {};
+      const call = (cand.content?.parts || []).find(p => p.functionCall?.name === tool.name);
+      return { args: call?.functionCall?.args || null, finishReason: cand.finishReason || "알수없음" };
+    }
     const errBody = await apiRes.text();
     if (RETRYABLE_STATUS.has(apiRes.status) && attempt < waits.length) {
-      console.error(`Claude API ${apiRes.status} — ${waits[attempt] / 1000}초 후 재시도`);
+      console.error(`Gemini API ${apiRes.status} — ${waits[attempt] / 1000}초 후 재시도`);
       await new Promise(r => setTimeout(r, waits[attempt]));
       continue;
     }
-    throw new Error(`Claude API 오류 ${apiRes.status}: ${errBody.slice(0, 500)}`);
+    const hint = apiRes.status === 429 ? " (무료 한도 초과 — 잠시 후, 하루 한도면 한국 시간 오후 4~5시 이후 다시 시도)" : "";
+    throw new Error(`Gemini API 오류 ${apiRes.status}${hint}: ${errBody.slice(0, 500)}`);
   }
 }
 
-async function splitTelegramDigests(items, { ANTHROPIC_API_KEY, MODEL }) {
+async function splitTelegramDigests(items, { GEMINI_API_KEY }) {
   // 텔레그램 출처이면서 원문이 어느 정도 긴(여러 뉴스가 섞였을 가능성 있는) 항목만 후보로 삼음 —
   // 짧은 단신까지 매번 AI에 물어보면 비용만 늘고 어차피 쪼갤 게 없음.
   const candidates = [];
@@ -349,18 +367,11 @@ async function splitTelegramDigests(items, { ANTHROPIC_API_KEY, MODEL }) {
     `하나의 이슈만 다루는 글은 결과에 포함시키지 말 것.\n\n[텔레그램 원문]\n${lines}`;
 
   try {
-    const apiJson = await callClaude(ANTHROPIC_API_KEY, {
-      model: MODEL,
-      max_tokens: 8000,
-      tools: [TELEGRAM_SPLIT_TOOL],
-      tool_choice: { type: "tool", name: "split_telegram_digests" },
-      messages: [{ role: "user", content: prompt }],
-    });
-    const toolUse = (apiJson.content || []).find(b => b.type === "tool_use" && b.name === "split_telegram_digests");
-    if (!toolUse || !Array.isArray(toolUse.input?.splits)) return items;
+    const { args } = await callGemini(GEMINI_API_KEY, TELEGRAM_SPLIT_TOOL, prompt, 16000);
+    if (!args || !Array.isArray(args.splits)) return items;
 
     const splitMap = new Map(); // 1-based index -> stories[]
-    for (const s of toolUse.input.splits) {
+    for (const s of args.splits) {
       if (Number.isInteger(s.index) && Array.isArray(s.stories) && s.stories.length >= 2) {
         splitMap.set(s.index, s.stories);
       }
@@ -454,9 +465,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { SUPABASE_URL, SUPABASE_SERVICE_KEY, ANTHROPIC_API_KEY } = process.env;
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !ANTHROPIC_API_KEY) {
-    res.status(500).json({ error: "서버 환경변수(SUPABASE_URL/SUPABASE_SERVICE_KEY/ANTHROPIC_API_KEY)가 설정되지 않음" });
+  const { SUPABASE_URL, SUPABASE_SERVICE_KEY, GEMINI_API_KEY } = process.env;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !GEMINI_API_KEY) {
+    res.status(500).json({ error: "서버 환경변수(SUPABASE_URL/SUPABASE_SERVICE_KEY/GEMINI_API_KEY)가 설정되지 않음" });
     return;
   }
 
@@ -533,7 +544,7 @@ export default async function handler(req, res) {
 
       // 텔레그램 "뉴스정리" 글(여러 뉴스가 한 번에 섞여있는 글)이 있으면 개별 뉴스 단위로
       // 쪼갬(2026-09-23 추가) — 쪼개진 뒤에는 이후 로직에서 완전히 일반 항목과 동일하게 처리됨.
-      let items = await splitTelegramDigests(fetched.batch, { ANTHROPIC_API_KEY, MODEL });
+      let items = await splitTelegramDigests(fetched.batch, { GEMINI_API_KEY });
 
       // 이번 배치에 실제로 섞여있는 기사 날짜(들) — 보통은 하루지만, 백로그가 자정을 넘겨서
       // 처리되면 여러 날짜가 같이 들어있을 수 있음. 아래 조회들은 전부 이 날짜(들) 기준으로 함.
@@ -557,7 +568,7 @@ export default async function handler(req, res) {
       const existingLines = existingClusters.length
         ? existingClusters.map((c, i) => `${i + 1}. ${c.headline} [${(c.targets || []).join(", ") || "-"}]`).join("\n")
         : "(오늘 진행 중인 클러스터 없음)";
-      let toolUse = null;
+      let toolArgs = null;
       while (true) {
         // 텔레그램 제목은 본문 앞 60자를 자른 거라 숫자가 거의 안 들어있음 — 본문 앞부분을 같이 보여줌(2026-10-23)
         const newLines = items.map((it, i) => {
@@ -622,21 +633,15 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
 
 모든 유형 공통: 순한글로만 작성(한자 금지)`;
 
-        const apiJson = await callClaude(ANTHROPIC_API_KEY, {
-          model: MODEL,
-          max_tokens: MAX_TOKENS,
-          tools: [UPDATE_TOOL],
-          tool_choice: { type: "tool", name: "emit_updates" },
-          messages: [{ role: "user", content: prompt }],
-        });
+        const { args, finishReason } = await callGemini(GEMINI_API_KEY, UPDATE_TOOL, prompt, MAX_TOKENS);
 
         let failMsg = null;
-        if (apiJson.stop_reason === "max_tokens") {
+        if (finishReason === "MAX_TOKENS") {
           failMsg = `응답이 너무 길어서 중간에 잘림 (처리하려던 항목 ${items.length}건)`;
         } else {
-          toolUse = (apiJson.content || []).find(b => b.type === "tool_use" && b.name === "emit_updates");
-          if (!toolUse || !toolUse.input || !Array.isArray(toolUse.input.updates)) {
-            failMsg = `Claude가 구조화된 분류 결과를 반환하지 않음 (형식 오류, stop_reason: ${apiJson.stop_reason || "알수없음"})`;
+          toolArgs = args;
+          if (!toolArgs || !Array.isArray(toolArgs.updates)) {
+            failMsg = `Gemini가 구조화된 분류 결과를 반환하지 않음 (형식 오류, finishReason: ${finishReason})`;
           }
         }
         if (!failMsg) break;
@@ -670,7 +675,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         return existingGroups.get(clusterRow.id);
       }
 
-      for (const u of toolUse.input.updates) {
+      for (const u of toolArgs.updates) {
         const idxList = Array.isArray(u.indices)
           ? u.indices.filter(i => Number.isInteger(i) && i >= 1 && i <= items.length && !seen.has(i))
           : [];

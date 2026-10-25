@@ -6,13 +6,13 @@
 
 - `scraper/poll.mjs` + `scraper/sources.mjs`: GitHub Actions 워크플로 2개가 각각 5분마다 따로 실행(`poll-telegram.yml` → `node scraper/poll.mjs telegram`, `poll-keywords.yml` → `node scraper/poll.mjs keywords`). 별도로 `poll-prices.yml` → `node scraper/prices.mjs`가 장중에 KIS 시세(등락률)를 `price_moves`에 저장. 텔레그램 공개채널(`t.me/s/<handle>`) / Google News RSS(추적 키워드, 2개씩 `OR`로 묶어 검색, 매 실행마다 전체 순회)를 긁어서 Supabase `items` 테이블에 저장. 서로 영향 없게 일부러 분리한 것
 - `web/index.html`: 대시보드 화면(단일 파일). Vercel이 `web` 폴더를 정적 호스팅. Supabase Realtime 구독으로 새 데이터 즉시 반영
-- `api/summarize.js`: Vercel 서버리스 함수. 브리핑 탭의 "수동 버튼"을 누르면 새로 쌓인 기사를 Claude API(Haiku)로 묶고 요약해서 `clusters`/`briefings` 테이블에 저장
+- `api/summarize.js`: Vercel 서버리스 함수. 브리핑 탭의 "수동 버튼"을 누르면 새로 쌓인 기사를 Gemini API(무료 등급, 2026-10-25 Claude에서 변경)로 묶고 요약해서 `clusters`/`briefings` 테이블에 저장
 - `supabase/schema.sql`: 테이블 정의 + 초기 키워드 시드. 주의: `clusters`, `briefings` 테이블은 이 파일에 없음(나중에 Supabase에서 직접 추가됨). 스키마를 바꿀 땐 이 파일도 같이 맞춰 줄 것
 
 ## 배포 흐름 (중요)
 - `main` 브랜치에 push하면 Vercel이 자동 재배포함. GitHub Actions 수집 스크립트도 push된 코드로 다음 실행부터 바뀜
 - 그래서 push = 실서비스 반영. push 전에 반드시 변경 내용을 요약해서 보여주고 확인을 받을 것
-- 비밀키는 절대 코드에 넣지 말 것. `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`는 GitHub Secrets, `ANTHROPIC_API_KEY`와 Supabase 키는 Vercel 환경변수에 있음. `web/index.html`에는 anon 키만 들어가도 됨(service_role 키는 절대 금지)
+- 비밀키는 절대 코드에 넣지 말 것. `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`는 GitHub Secrets, `GEMINI_API_KEY`와 Supabase 키는 Vercel 환경변수에 있음(옛 `ANTHROPIC_API_KEY`는 더 이상 안 씀). `web/index.html`에는 anon 키만 들어가도 됨(service_role 키는 절대 금지)
 - 로컬에 Supabase 키가 없으니, DB를 실제로 읽어야 확인되는 건 "Supabase 대시보드에서 이렇게 확인해 봐"처럼 사용자에게 방법을 알려 줄 것
 
 ## 사용자에 대해
