@@ -7,6 +7,9 @@
     },
     "api/poll.js": {
       "maxDuration": 120
+    },
+    "api/tick.js": {
+      "maxDuration": 300
     }
   }
 }

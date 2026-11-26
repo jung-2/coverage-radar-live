@@ -82,11 +82,26 @@ test("다시 눌러도 이미 처리한 글은 또 요약하지 않음", async (
   assert.equal(clusterUrls().length, 10);
 });
 
-test("사람이 30초 안에 또 누르면 막고, 자동 이어서 호출은 통과", async () => {
+test("다른 요약이 돌고 있으면(잠금) 409로 돌려보내고, 5분 넘은 잠금은 풀린 걸로 봄", async () => {
+  db.DB.items.push(tgItem(1, microIso(NOW - 60e3)));
+  db.DB.status.push({ id: 3, last_run_at: new Date(NOW - 60e3).toISOString(), last_note: "진행중" });
+  const busy = await press(false);
+  assert.equal(busy.code, 409);
+  assert.equal(clusterUrls().length, 0);
+  db.DB.status[0].last_run_at = new Date(NOW - 6 * 60e3).toISOString(); // 죽은 실행이 남긴 잠금
+  const r = await press(false);
+  assert.equal(r.code, 200);
+  assert.equal(clusterUrls().length, 1);
+});
+
+test("요약이 끝나면 잠금을 풀고 결과를 status id 3에 남김(화면 상단 표시용)", async () => {
   db.DB.items.push(tgItem(1, microIso(NOW - 60e3)));
   await press(false);
-  assert.equal((await press(false)).code, 429);
-  assert.equal((await press(true)).code, 200);
+  const row = db.DB.status.find(r => r.id === 3);
+  assert.match(row.last_note, /^1건 정리/);
+  const again = await press(false);
+  assert.equal(again.code, 200, "바로 다시 눌러도 막히지 않음(쿨다운 없음)");
+  assert.equal(db.DB.status.find(r => r.id === 3).last_note, "새 글 없음");
 });
 
 test("AI 응답이 잘리면 배치를 반으로 줄여서 다시 하고, 결국 다 처리함", async () => {

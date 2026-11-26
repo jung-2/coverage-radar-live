@@ -33,6 +33,19 @@ async function claim(sb, mode) {
   return true;
 }
 
+// 텔레그램/키워드 중 돌 차례인 것만 수집(api/tick.js도 이걸 씀)
+export async function collectDue(sb, trigger) {
+  return Promise.all(["telegram", "keywords"].map(async (mode) => {
+    if (!(await claim(sb, mode))) return { mode, skipped: true };
+    try {
+      return await runCollect(sb, mode, { trigger });
+    } catch (err) {
+      console.error(`${mode} 수집 실패:`, err);
+      return { mode, error: String(err.message || err) };
+    }
+  }));
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "POST만 지원함" });
@@ -46,16 +59,7 @@ export default async function handler(req, res) {
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
   try {
-    const results = await Promise.all(["telegram", "keywords"].map(async (mode) => {
-      if (!(await claim(sb, mode))) return { mode, skipped: true };
-      try {
-        return await runCollect(sb, mode, { trigger: "화면" });
-      } catch (err) {
-        console.error(`${mode} 수집 실패:`, err);
-        return { mode, error: String(err.message || err) };
-      }
-    }));
-    res.status(200).json({ results });
+    res.status(200).json({ results: await collectDue(sb, "화면") });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: String(err.message || err) });

@@ -88,6 +88,15 @@
   .sig-title a{text-decoration:none;}
   .sig-title a:hover{text-decoration:underline;}
   .sig-why{font-size:11.5px;color:var(--sub);margin-top:4px;line-height:1.65;}
+  .hot-box{background:var(--block);border:1px solid var(--border);border-left:3px solid var(--miss);border-radius:8px;padding:8px 10px;margin-bottom:10px;}
+  .hot-title{font-size:11px;font-weight:700;color:var(--miss);margin-bottom:2px;}
+  .hot-row{padding:5px 0;border-top:1px solid var(--border);font-size:12.5px;line-height:1.5;}
+  .hot-title+.hot-row{border-top:none;}
+  .hot-time{color:var(--sub);font-size:10.5px;margin-right:6px;}
+  .hot-key{font-weight:700;margin-right:5px;}
+  .hot-why{color:var(--sub);font-size:11.5px;margin-top:1px;}
+  .new-badge{display:inline-block;background:var(--info);color:#fff;font-size:9.5px;font-weight:700;border-radius:6px;padding:0 5px;margin-right:5px;vertical-align:1px;}
+  .auto-warn{color:var(--miss);font-weight:600;}
   .sig-row-compact .sig-title{font-size:11.5px;font-weight:400;}
   /* 업데이트 누른 순간 구분선(2026-09-29 추가) */
   .round-divider{display:flex;align-items:center;gap:8px;margin:16px 0 8px;font-size:11px;font-weight:700;color:var(--info);}
@@ -157,7 +166,7 @@
     <div class="hero">
       <div class="hero-head">
         <div class="sec">브리핑</div>
-        <button id="brief-btn">업데이트</button>
+        <button id="brief-btn" title="5분마다 자동으로 정리됨. 지금 바로 돌리고 싶을 때만 누르면 됨">지금 업데이트</button>
       </div>
       <div class="brief-status" id="brief-status"></div>
 
@@ -168,7 +177,7 @@
 
       <div class="day-group">
         <div class="day-title" id="today-title">오늘</div>
-        <div id="brief-today"><div class="empty">아직 생성된 업데이트 없음 — "업데이트" 눌러서 만들어봐</div></div>
+        <div id="brief-today"><div class="empty">불러오는 중…</div></div>
       </div>
       <details class="day-group-collapse" id="yesterday-details">
         <summary id="yesterday-summary">어제</summary>
@@ -445,7 +454,7 @@ function renderGroupCard(group){
     <div class="sig-group">
       <div class="sig-group-top">
         <span class="sig-badge" style="background:var(${IMPACT_VAR[bestImpact]||"--sub"})">${IMPACT_LABEL[bestImpact]||"낮음"}</span>
-        <span class="sig-group-title">${group.key}</span>
+        <span class="sig-group-title">${newBadge(latestIso)}${group.key}</span>
         <span class="sig-group-count">${items.length}건</span>
         <span class="sig-src">최근 ${kstTimeLabel(latestIso)}</span>
       </div>
@@ -508,6 +517,40 @@ function clusterListHtml(clusters, emptyMsg){
     : "";
 
   return primaryHtml + lowHtml;
+}
+
+// ── 맨 위 "지금 중요한 것"(2026-11-26 추가) ─────────────────────────
+// 오늘 중요도 "높음" 카드만 최근 갱신순으로 한 줄씩. 마지막으로 화면을 본 뒤에 새로 갱신된 건 "새" 표시.
+// 마지막으로 본 시각은 이 브라우저에만 저장(localStorage) — 화면을 떠날 때(다른 탭/닫기) 갱신함.
+const HOT_MAX = 12;
+let lastSeenAt = 0;
+try { lastSeenAt = Number(localStorage.getItem("radar_last_seen")) || 0; } catch {}
+function markSeen(){ try { localStorage.setItem("radar_last_seen", String(Date.now())); } catch {} }
+document.addEventListener("visibilitychange", ()=>{ if (document.visibilityState === "hidden") markSeen(); });
+window.addEventListener("pagehide", markSeen);
+function isNewSinceSeen(iso){ return lastSeenAt && new Date(iso).getTime() > lastSeenAt; }
+function newBadge(iso){ return isNewSinceSeen(iso) ? `<span class="new-badge">새</span>` : ""; }
+
+function hotListHtml(clusters){
+  const hot = clusters.filter(c=>c.impact==="high")
+    .sort((a,b)=> new Date(b.updated_at) - new Date(a.updated_at)).slice(0, HOT_MAX);
+  if (!hot.length) return "";
+  const nNew = hot.filter(c=>isNewSinceSeen(c.updated_at)).length;
+  const rows = hot.map(c=>{
+    const key = (c.targets && c.targets[0]) || "기타";
+    // 요약 첫 줄만(리포트형은 "[BEAT]" 한 줄 뒤에 숫자가 오니까 그땐 다음 줄까지 붙임)
+    const lines = String(c.why || "").split("\n").map(l=>l.trim()).filter(Boolean);
+    let firstLine = lines[0] || "";
+    if (/^\[(BEAT|MISS|혼조|IN-LINE)\]$/.test(firstLine) && lines[1]) firstLine += " " + lines[1];
+    const why = firstLine.length > 140 ? firstLine.slice(0, 140) + "…" : firstLine;
+    const keyHtml = String(c.headline || "").startsWith(key) ? "" : `<span class="hot-key">${esc(key)}</span>`;
+    const url = (c.sources && c.sources[0] && c.sources[0].url) || "";
+    return `<div class="hot-row">${newBadge(c.updated_at)}<span class="hot-time">${kstTimeLabel(c.updated_at)}</span>${keyHtml}`
+      + (url ? `<a href="${safeUrl(url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(c.headline)}</a>` : esc(c.headline))
+      + (why ? `<div class="hot-why">${esc(why)}</div>` : "")
+      + `</div>`;
+  }).join("");
+  return `<div class="hot-box"><div class="hot-title">지금 중요한 것 · 높음 ${hot.length}건${nNew ? ` (새로 ${nNew}건)` : ""}</div>${rows}</div>`;
 }
 
 // ── 업데이트를 누른 순간별로 나눠서 보기(2026-09-29 추가) ─────────────
@@ -886,8 +929,11 @@ function renderActiveTab(){
   const yesterday = cachedYesterdayClusters.filter(c=>classifyClusterTab(c)===activeBriefTab);
   document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)})`;
   document.getElementById("yesterday-summary").textContent = `어제 (${monthDayLabel(cachedYestKey)})${yesterday.length ? ` — ${yesterday.length}건` : ""}`;
-  document.getElementById("brief-today").innerHTML = roundListHtml(today, `아직 생성된 업데이트 없음 — "업데이트" 눌러서 만들어봐`, cachedTodayKey);
-  document.getElementById("brief-yesterday").innerHTML = roundListHtml(yesterday, "기록 없음", cachedYestKey);
+  // 자동 요약(2026-11-26)부터는 5분마다 돌아서 "누른 순간별" 구분선(roundListHtml)이 하루 수백 개가 됨 →
+  // 맨 위 "지금 중요한 것" + 회사별 카드(최근 갱신순, 낮은 중요도는 접힘)로 바꿈
+  document.getElementById("brief-today").innerHTML = hotListHtml(today)
+    + clusterListHtml(today, "아직 정리된 게 없음 — 새 글이 들어오면 5분 안에 자동으로 정리됨");
+  document.getElementById("brief-yesterday").innerHTML = clusterListHtml(yesterday, "기록 없음");
 }
 
 async function loadClusters(){
@@ -944,6 +990,10 @@ async function generateBriefing(){
       }
       if (netErr) throw new Error(`서버에 연결이 안 됨(${netErr.message}) — 인터넷 연결 확인하고 다시 눌러줘`);
 
+      if (res.status === 409){
+        status.textContent = "자동 요약이 지금 돌고 있음 — 끝나면 화면에 바로 뜸";
+        break;
+      }
       if (res.status === 429){
         // 연타 방지 쿨다운에 걸림 — 자동 이어처리 중이니 쿨다운 끝날 때까지 기다렸다 자동 재시도
         status.textContent = "잠깐 대기 중… (연타 방지 쿨다운, 자동으로 다시 시도함)";
@@ -1043,11 +1093,19 @@ function statusLabel(iso){
   const time = `${String(k.getUTCHours()).padStart(2,"0")}:${String(k.getUTCMinutes()).padStart(2,"0")}`;
   return kstDayKeyPadded(iso) === kstDayKeyPadded(new Date().toISOString()) ? time : `${k.getUTCMonth()+1}/${k.getUTCDate()} ${time}`;
 }
+// 자동 처리(status id 3 = 마지막 자동 요약)가 20분 넘게 안 돌았으면 경고 — 예약(pg_cron)이 꺼졌거나 서버 오류
+const AUTO_STALE_MS = 20 * 60 * 1000;
 function renderStatus(){
-  const tg = statusRows[1], kw = statusRows[2];
+  const tg = statusRows[1], kw = statusRows[2], auto = statusRows[3];
   const el = document.getElementById("last-updated");
-  el.textContent = `텔레그램 요약 ${statusLabel(lastBriefing?.created_at)} · 키워드 수집 ${statusLabel(kw?.last_run_at)}`;
-  el.title = `텔레그램 요약: ${lastBriefing?.content || "-"}
+  const autoAt = auto?.last_run_at;
+  const stale = !autoAt || Date.now() - new Date(autoAt).getTime() > AUTO_STALE_MS;
+  const autoErr = String(auto?.last_note || "").startsWith("오류");
+  el.innerHTML = `자동 정리 ${statusLabel(autoAt)}`
+    + (stale ? ` <span class="auto-warn">· 자동 처리 멈춤</span>` : autoErr ? ` <span class="auto-warn">· 오류</span>` : "")
+    + ` · 텔레그램 수집 ${statusLabel(tg?.last_run_at)} · 키워드 수집 ${statusLabel(kw?.last_run_at)}`;
+  el.title = `자동 정리: ${auto?.last_note || "-"}
+텔레그램 요약 기록: ${lastBriefing?.content || "-"}
 텔레그램 글 수집(자동): ${statusLabel(tg?.last_run_at)} — ${tg?.last_note || "-"}
 키워드 수집(자동): ${kw?.last_note || "-"}`;
 }
@@ -1107,9 +1165,11 @@ async function init(){
     .subscribe();
 
   setInterval(renderFeed, 30000); // "n분 전" 텍스트 갱신용
+  setInterval(renderStatus, 60000); // "자동 처리 멈춤" 경고가 시간이 지나면 뜨도록
 
-  // 자동 수집(2026-11-26): GitHub Actions 예약 실행이 실제론 6~10시간에 한 번만 돌아서, 화면을 열어 두면
-  // 여기서 5분마다 직접 수집을 부름. 서버(api/poll.js)가 4분 안에 이미 돌았으면 알아서 건너뛰니까 탭 여러 개여도 괜찮음.
+  // 자동 처리(2026-11-26): 주 경로는 Supabase 예약(pg_cron)이 5분마다 /api/tick을 부르는 것. 화면을 열어 두면
+  // 여기서도 5분마다 불러서, 예약이 아직 설정 안 됐거나 멈췄을 때도 돌게 함. 서버가 수집은 4분 안에 이미 돌았으면
+  // 건너뛰고, 요약은 잠금으로 한 번만 돌게 하니까 탭 여러 개여도 괜찮음.
   // 새 글은 위 실시간 구독으로 화면에 바로 들어옴. 화면이 안 보일 땐(다른 탭) 안 부름.
   autoCollect();
   setInterval(autoCollect, 5 * 60 * 1000);
@@ -1121,7 +1181,7 @@ async function autoCollect(){
   if (Date.now() - lastAutoCollect < 4 * 60 * 1000) return;
   lastAutoCollect = Date.now();
   try{
-    const res = await fetch("/api/poll", {method:"POST"});
+    const res = await fetch("/api/tick?by=screen", {method:"POST"});
     if (!res.ok) console.warn("자동 수집 실패:", res.status, await res.text().catch(()=>""));
   } catch(e){ console.warn("자동 수집 연결 실패:", e.message); }
 }
