@@ -1067,7 +1067,7 @@ async function init(){
   await Promise.all([loadKeywords(), loadChannels(), loadItems(), loadClusters(), loadKeywordItems(), loadPriceMoves()]);
   await loadStatus();
 
-  // 실시간 구독 — DB에 새 행이 쓰이는 즉시 화면 반영 (수집 자체는 GitHub Actions가 5분 주기로 폴링)
+  // 실시간 구독 — DB에 새 행이 쓰이는 즉시 화면 반영 (수집은 아래 autoCollect가 5분마다 부르는 /api/poll)
   sb.channel("public:items")
     .on("postgres_changes", {event:"INSERT", schema:"public", table:"items"}, payload=>{
       allItems = [payload.new, ...allItems.filter(it=>it.id!==payload.new.id)];
@@ -1107,6 +1107,23 @@ async function init(){
     .subscribe();
 
   setInterval(renderFeed, 30000); // "n분 전" 텍스트 갱신용
+
+  // 자동 수집(2026-11-26): GitHub Actions 예약 실행이 실제론 6~10시간에 한 번만 돌아서, 화면을 열어 두면
+  // 여기서 5분마다 직접 수집을 부름. 서버(api/poll.js)가 4분 안에 이미 돌았으면 알아서 건너뛰니까 탭 여러 개여도 괜찮음.
+  // 새 글은 위 실시간 구독으로 화면에 바로 들어옴. 화면이 안 보일 땐(다른 탭) 안 부름.
+  autoCollect();
+  setInterval(autoCollect, 5 * 60 * 1000);
+  document.addEventListener("visibilitychange", autoCollect);
+}
+let lastAutoCollect = 0;
+async function autoCollect(){
+  if (document.visibilityState !== "visible") return;
+  if (Date.now() - lastAutoCollect < 4 * 60 * 1000) return;
+  lastAutoCollect = Date.now();
+  try{
+    const res = await fetch("/api/poll", {method:"POST"});
+    if (!res.ok) console.warn("자동 수집 실패:", res.status, await res.text().catch(()=>""));
+  } catch(e){ console.warn("자동 수집 연결 실패:", e.message); }
 }
 init();
 </script>

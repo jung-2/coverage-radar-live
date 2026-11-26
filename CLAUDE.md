@@ -4,14 +4,20 @@
 반도체/AI인프라 커버리지 뉴스·텔레그램을 자동으로 모아 보여주는 개인용 대시보드.
 라이브 주소: https://coverage-radar-live.vercel.app/
 
-- `scraper/poll.mjs` + `scraper/sources.mjs`: GitHub Actions 워크플로 2개가 각각 5분마다 따로 실행(`poll-telegram.yml` → `node scraper/poll.mjs telegram`, `poll-keywords.yml` → `node scraper/poll.mjs keywords`). 별도로 `poll-prices.yml` → `node scraper/prices.mjs`가 장중에 KIS 시세(등락률)를 `price_moves`에 저장. 텔레그램 공개채널(`t.me/s/<handle>`) / Google News RSS(추적 키워드, 2개씩 `OR`로 묶어 검색, 매 실행마다 전체 순회)를 긁어서 Supabase `items` 테이블에 저장. 서로 영향 없게 일부러 분리한 것
+- 수집(텔레그램/추적 키워드): 로직은 `scraper/collect.mjs` 하나. 실행 경로 두 개(2026-11-26 변경):
+  - **주 경로** `api/poll.js`(Vercel 함수): 대시보드를 열어 두면 화면(`autoCollect`)이 5분마다 부름. 종류별로 4분 안에 이미 돌았으면 서버가 건너뜀(탭 여러 개여도 한 번만)
+  - **예비** GitHub Actions `poll-telegram.yml`/`poll-keywords.yml` → `scraper/poll.mjs`. "5분마다"로 설정돼 있지만 GitHub가 무료 저장소 예약 실행을 미뤄서 실제론 6~10시간에 한 번 돎(2026-11 확인). 그래서 주 경로를 화면 쪽으로 옮긴 것
+  - 텔레그램은 공개채널 웹 미리보기(`t.me/s/<handle>`)를 긁음. 한 페이지에 최근 20개라, DB에 있는 그 채널 마지막 글 번호까지 `?before=`로 이전 페이지를 더 읽어서 빠진 글을 채움(최대 8페이지, 48시간 이내). 새로 추가한 채널은 첫 페이지만
+  - 추적 키워드는 Google News RSS(2개씩 `OR`로 묶어 검색, 매 실행마다 전체 순회)
+  - 시세: `poll-prices.yml` → `node scraper/prices.mjs`가 KIS 등락률을 `price_moves`에 저장. 이것도 GitHub 예약이라 실제론 하루 몇 번만 돎(아직 안 옮김)
+  - 텔레그램 봇 API는 안 씀: 봇은 자기가 관리자인 채널만 읽을 수 있어서 남의 공개채널 수집엔 못 씀
 - `web/index.html`: 대시보드 화면(단일 파일). Vercel이 `web` 폴더를 정적 호스팅. Supabase Realtime 구독으로 새 데이터 즉시 반영
 - `api/summarize.js`: Vercel 서버리스 함수. 브리핑 탭의 "수동 버튼"을 누르면 새로 쌓인 기사를 Gemini API(무료 등급, 2026-10-25 Claude에서 변경)로 묶고 요약해서 `clusters`/`briefings` 테이블에 저장
 - `supabase/schema.sql`: 테이블 정의 + 초기 키워드 시드. 주의: `clusters`, `briefings` 테이블은 이 파일에 없음(나중에 Supabase에서 직접 추가됨). 스키마를 바꿀 땐 이 파일도 같이 맞춰 줄 것
 
 ## 배포 흐름 (중요)
 - `main` 브랜치에 push하면 Vercel이 자동 재배포함. GitHub Actions 수집 스크립트도 push된 코드로 다음 실행부터 바뀜
-- 그래서 push = 실서비스 반영. push 전에 반드시 변경 내용을 요약해서 보여주고 확인을 받을 것
+- 그래서 `main` push = 실서비스 반영. Claude는 `main`에 직접 올리지 않고 작업 브랜치 + PR로만 올림. 실서비스 반영은 사용자가 PR 머지 버튼으로 함
 - 비밀키는 절대 코드에 넣지 말 것. `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`는 GitHub Secrets, `GEMINI_API_KEY`와 Supabase 키는 Vercel 환경변수에 있음(옛 `ANTHROPIC_API_KEY`는 더 이상 안 씀). `web/index.html`에는 anon 키만 들어가도 됨(service_role 키는 절대 금지)
 - 로컬에 Supabase 키가 없으니, DB를 실제로 읽어야 확인되는 건 "Supabase 대시보드에서 이렇게 확인해 봐"처럼 사용자에게 방법을 알려 줄 것
 
@@ -37,7 +43,7 @@
 - 금액: 달러는 $1bn/$100mn, 원화는 억원/조원
 
 ## 작업 방식
-- 큰 변경은 먼저 계획을 보여주고 확인받은 뒤 진행
+- 사용자가 "허가 받지 말고 알아서 해"라고 함(2026-11-26). 무엇을 할지는 Claude가 판단해서 바로 진행하고, 고친 뒤 PR과 짧은 요약으로 보고할 것. 중간에 "해도 될까?"라고 묻지 말 것. 단 위 "이미 정해진 결정사항"을 뒤집는 건 이유를 PR에 분명히 적을 것
 - 수정 후 `npm run check`(전체 문법 검사, `web/*.html` 안 스크립트 포함)와 `npm test`(가짜 DB·가짜 AI로 요약 흐름 시험, `test/`)를 돌릴 것. `summarize.js` 동작을 바꾸면 `test/summarize.test.mjs`에 시험도 같이 추가
 - 작업 흐름: 작업 브랜치에서 고치고 → PR 올림 → GitHub가 `check.yml`로 문법·시험 자동 검사 + Vercel이 미리보기 주소를 만듦 → 사용자가 미리보기 확인 → 사용자가 PR 머지(= 실서비스 반영). `main`에 직접 push하지 말 것. 단 미리보기도 실제 Supabase DB를 쓰니까, 미리보기에서 텔레그램 "업데이트"를 누르면 실제 데이터가 바뀜
 - 커밋 메시지는 한국어로 무엇을 왜 바꿨는지 짧게

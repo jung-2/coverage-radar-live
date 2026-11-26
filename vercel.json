@@ -2,6 +2,11 @@
   "buildCommand": "",
   "outputDirectory": "web",
   "functions": {
-    "api/summarize.js": { "maxDuration": 300 }
+    "api/summarize.js": {
+      "maxDuration": 300
+    },
+    "api/poll.js": {
+      "maxDuration": 120
+    }
   }
 }
