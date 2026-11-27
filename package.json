@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "poll": "node scraper/poll.mjs"
+    "poll": "node scraper/poll.mjs",
+    "check": "node scripts/check.mjs",
+    "test": "node --test --experimental-test-module-mocks test/*.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

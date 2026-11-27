@@ -81,7 +81,6 @@ const MAX_EXISTING_CLUSTERS = 80;   // 프롬프트에 보여줄 "오늘 진행 
                                      // 아래 중복 방지 안전장치가 전체 클러스터를 대상으로 한 번 더 검사함)
 const MAX_TOKENS = 40000;           // 리포트 숫자 요약이 길어질 수 있어 넉넉히 잡음
                                      // (2026-10-25 24000→40000: Gemini는 내부 생각 토큰도 이 한도에 포함됨)
-const COOLDOWN_MS = 30 * 1000;      // 연타 방지용 최소 간격
 const FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000; // 이전 실행 기록이 없을 때 기본 조회 범위(24시간)
 const MAX_BACKLOG_MS = 48 * 60 * 60 * 1000; // (2026-09-27 추가) 커서가 이보다 더 옛날이면 강제로 이 시점까지 당겨서 시작함.
                                      // 화면은 어차피 오늘/어제만 보여주는데, 무슨 이유로든(장애 등) 커서가 며칠씩 밀리면
@@ -459,19 +458,7 @@ async function fetchNextBatch(sb, cursorIso) {
   return { batch, nextCursor, noMoreAfterThis: !more };
 }
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "POST만 지원함" });
-    return;
-  }
-
-  const { SUPABASE_URL, SUPABASE_SERVICE_KEY, GEMINI_API_KEY } = process.env;
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !GEMINI_API_KEY) {
-    res.status(500).json({ error: "서버 환경변수(SUPABASE_URL/SUPABASE_SERVICE_KEY/GEMINI_API_KEY)가 설정되지 않음" });
-    return;
-  }
-
-  const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+async function summarizeCore(req, res, sb, GEMINI_API_KEY) {
   const startedAt = Date.now();
 
   // "업데이트 버튼을 누른 순간"(2026-09-29 추가): 화면이 버튼 한 번당 하나씩 만들어 보내는 시각.
@@ -479,15 +466,11 @@ export default async function handler(req, res) {
   // 기사(sources)와 요약 메모(updates)에 run_at으로 붙여서, 화면이 누른 순간별로 구분해서 보여줌.
   // 값이 없거나 이상하면(옛날 화면 캐시 등) 이번 호출 시작 시각으로 대신함.
   let runAt = new Date();
-  // 화면이 "밀린 게 남아서 자동으로 이어서" 부르는 호출이면 true(2026-10-23 추가) — 이건 사람이 연타한 게
-  // 아니라서 연타 방지 쿨다운을 안 걸음. 예전엔 이어서 부를 때마다 쿨다운(30초)에 걸려서 매번 32초씩 그냥 기다렸음.
-  let isContinuation = false;
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     const d = new Date(body && body.run_at);
     const age = Date.now() - d.getTime();
     if (!isNaN(d) && age >= -60 * 1000 && age <= 6 * 3600 * 1000) runAt = d;
-    isContinuation = !!(body && body.continuation);
   } catch { /* 본문이 없거나 JSON이 아니면 무시 */ }
   const runAtIso = runAt.toISOString();
 
@@ -502,13 +485,8 @@ export default async function handler(req, res) {
       .limit(1)
       .maybeSingle();
 
-    if (lastRun?.created_at && !isContinuation) {
-      const elapsed = Date.now() - new Date(lastRun.created_at).getTime();
-      if (elapsed < COOLDOWN_MS) {
-        res.status(429).json({ error: `너무 빠른 요청임. ${Math.ceil((COOLDOWN_MS - elapsed) / 1000)}초 후 다시 시도해줘.` });
-        return;
-      }
-    }
+    // (연타 방지 쿨다운은 2026-11-26에 없앰 — 자동 요약이 5분마다 돌면서 briefings에 기록을 남기니까 사람이
+    //  "지금 업데이트"를 누를 때마다 쿨다운에 걸렸음. 동시에 두 번 도는 건 아래 handler의 잠금이 막음.)
 
     // 커서는 DB에서 받은 문자열 그대로 씀(2026-10-23) — JS Date로 바꾸면 마이크로초가 잘려서 같은 글을 또 처리했음
     let startCursor = lastRun?.period_to || new Date(Date.now() - FALLBACK_WINDOW_MS).toISOString();
@@ -875,7 +853,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         period_to: cursor,
         item_count: totalProcessed,
         content: `${totalProcessed}건 처리(배치 ${batchesRun}개) · 새 클러스터 ${totalNewClusters}개 · 기존 클러스터 갱신 ${touchedClusterIds.size}건` +
-          (hasMoreBacklog ? ` · 아직 밀린 게 남음(${stoppedReason === "time_budget" ? "시간 예산 초과" : "배치 수 한도 초과"}) — 다시 눌러서 이어서 처리 필요` : "") +
+          (hasMoreBacklog ? ` · 아직 밀린 게 남음(${stoppedReason === "time_budget" ? "시간 예산 초과" : "배치 수 한도 초과"}) — 다음 자동 실행이 이어서 처리` : "") +
           (skippedOldBacklog ? ` · 48시간 넘게 밀린 오래된 백로그는 건너뛰고 최근 것부터 처리함` : ""),
         signals: [],
       });
@@ -893,4 +871,66 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
     console.error(err);
     res.status(500).json({ error: String(err.message || err) });
   }
+}
+
+// ── 자동 요약 잠금(2026-11-26 추가) ─────────────────────────────
+// 요약이 5분마다 자동으로 돌고(api/tick.js) 사람도 "지금 업데이트"를 누를 수 있어서, 둘이 겹치면 같은 글을
+// 동시에 처리해 카드가 중복될 수 있음. status 테이블 id 3 줄을 잠금 겸 "마지막 자동 요약 결과" 기록으로 씀:
+// last_note가 "진행중"이고 LOCK_LEASE_MS 안이면 다른 실행이 돌고 있는 것 → 409로 돌려보냄.
+// 실행이 중간에 죽어서 잠금이 안 풀려도 LOCK_LEASE_MS가 지나면 자동으로 풀림.
+const LOCK_ID = 3;
+const LOCK_LEASE_MS = 5 * 60 * 1000;
+
+async function acquireLock(sb) {
+  const { data: row } = await sb.from("status").select("id, last_run_at, last_note").eq("id", LOCK_ID).maybeSingle();
+  if (row && String(row.last_note || "").startsWith("진행중")
+    && Date.now() - new Date(row.last_run_at).getTime() < LOCK_LEASE_MS) return false;
+  const { error } = await sb.from("status").upsert(
+    { id: LOCK_ID, last_run_at: new Date().toISOString(), last_note: "진행중" }, { onConflict: "id" });
+  if (error) throw error;
+  return true;
+}
+
+async function releaseLock(sb, note) {
+  const { error } = await sb.from("status").upsert(
+    { id: LOCK_ID, last_run_at: new Date().toISOString(), last_note: note }, { onConflict: "id" });
+  if (error) console.error("요약 잠금 해제 실패:", error.message);
+}
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "POST만 지원함" });
+    return;
+  }
+
+  const { SUPABASE_URL, SUPABASE_SERVICE_KEY, GEMINI_API_KEY } = process.env;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !GEMINI_API_KEY) {
+    res.status(500).json({ error: "서버 환경변수(SUPABASE_URL/SUPABASE_SERVICE_KEY/GEMINI_API_KEY)가 설정되지 않음" });
+    return;
+  }
+  const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+  try {
+    if (!(await acquireLock(sb))) {
+      res.status(409).json({ busy: true, error: "자동 요약이 지금 돌고 있음 — 끝나면 화면에 바로 뜸" });
+      return;
+    }
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+    return;
+  }
+
+  // summarizeCore의 응답을 가로채서 잠금 해제 메모로 남김(화면 상단 "자동 요약" 표시에 쓰임)
+  let code = 200, body = {};
+  const capture = { status(c) { code = c; return capture; }, json(j) { body = j; } };
+  try {
+    await summarizeCore(req, capture, sb, GEMINI_API_KEY);
+  } catch (err) {
+    code = 500; body = { error: String(err.message || err) };
+  }
+  const note = code !== 200 ? `오류: ${body.error || code}`
+    : body.skipped ? "새 글 없음"
+    : `${body.item_count}건 정리(새 카드 ${body.new_clusters}개, 갱신 ${body.updated_clusters}개)` + (body.has_more_backlog ? " · 밀린 것 남음" : "");
+  await releaseLock(sb, note);
+  res.status(code).json(body);
 }

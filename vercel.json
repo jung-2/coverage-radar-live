@@ -2,6 +2,14 @@
   "buildCommand": "",
   "outputDirectory": "web",
   "functions": {
-    "api/summarize.js": { "maxDuration": 300 }
+    "api/summarize.js": {
+      "maxDuration": 300
+    },
+    "api/poll.js": {
+      "maxDuration": 120
+    },
+    "api/tick.js": {
+      "maxDuration": 300
+    }
   }
 }

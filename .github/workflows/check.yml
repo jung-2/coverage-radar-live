@@ -1,0 +1,19 @@
+name: 코드 검사 (문법 + 시험)
+
+# PR을 올리거나 main에 push될 때마다 자동으로 돎. 실서비스에는 아무 영향 없음(DB·API 안 건드림).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
