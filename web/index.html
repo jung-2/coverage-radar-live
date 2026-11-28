@@ -166,28 +166,42 @@
   .toolbar select{max-width:200px;}
   .tool-count{font-size:11px;color:var(--sub);margin-left:auto;}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:8px;align-items:start;}
-  .grid>.sig-group{margin-bottom:0;max-height:460px;overflow-y:auto;scrollbar-width:thin;}
+  .grid>.sig-group{margin-bottom:0;max-height:560px;overflow-y:auto;scrollbar-width:thin;}
   .grid>.empty{grid-column:1/-1;}
   .sig-group.low-only{background:transparent;border:1px solid var(--border);}
   .sig-group-title{overflow-wrap:anywhere;}
-  .sig-why{white-space:pre-line;overflow-wrap:anywhere;}
-  .sig-why.old-note{border-top:1px dashed var(--border);padding-top:4px;}
+  /* 읽기 좋게(2026-11-28): 설명은 본문색·조금 큰 글씨·문장 단위 불릿, 불릿 사이는 띄움(--gap으로 조절), 핵심 숫자는 형광펜 */
+  .hero{--gap:.65em;}
+  .sig-why{font-size:12.5px;color:var(--text);line-height:1.6;margin-top:6px;overflow-wrap:anywhere;}
+  .sig-why.old-note{border-top:1px solid var(--border);padding-top:7px;margin-top:9px;}
+  .note{margin:0;padding-left:15px;}
+  .note li{margin-bottom:var(--gap);}
+  .note li:last-child{margin-bottom:0;}
+  .note-label{font-weight:700;}
+  .note-time{font-size:10.5px;font-weight:700;color:var(--sub);margin-bottom:4px;}
+  .facts-label{font-size:10.5px;font-weight:700;color:var(--sub);margin-top:9px;}
+  .impact-reason{font-size:10px;color:var(--sub);}
+  .sig-subitem{padding:10px 12px;}
+  .sig-subitem-title{font-size:13px;font-weight:600;line-height:1.45;}
+  .sig-group-items{gap:8px;}
+  .hot-why{font-size:12px;color:var(--text);line-height:1.55;}
   .sig-subitem-title{overflow-wrap:anywhere;}
   .facts{margin:5px 0 0;padding:0;list-style:none;}
-  .facts li{font-size:11.5px;line-height:1.5;padding:1px 0 1px 8px;border-left:2px solid var(--border);margin-bottom:3px;overflow-wrap:anywhere;}
-  .num{font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;}
-  .excerpt{font-size:11px;color:var(--sub);margin-top:4px;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;}
+  .facts li{font-size:12.5px;line-height:1.55;padding:0 0 0 9px;border-left:2px solid var(--border);margin-bottom:var(--gap);overflow-wrap:anywhere;}
+  .facts li:last-child{margin-bottom:0;}
+  .num{font-weight:600;color:var(--text);background:rgba(255,208,0,.38);border-radius:2px;padding:0 1px;font-variant-numeric:tabular-nums;}
+  .excerpt{font-size:12.5px;color:var(--text);margin-top:6px;line-height:1.6;white-space:pre-line;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:7;-webkit-box-orient:vertical;overflow:hidden;}
   .link-btn{font-family:inherit;font-size:10.5px;color:var(--info);background:none;border:none;padding:0;cursor:pointer;margin-top:5px;text-align:left;}
   .link-btn:hover{text-decoration:underline;}
   .hot-rows{columns:2 420px;column-gap:18px;}
   .hot-row{break-inside:avoid;}
   .hot-row:first-child{border-top:none;}
   .hot-row .link-btn{font-size:12.5px;color:inherit;margin:0;}
-  .post{background:var(--block);border:1px solid var(--border);border-radius:8px;padding:8px 10px;cursor:pointer;}
+  .post{background:var(--block);border:1px solid var(--border);border-radius:8px;padding:10px 12px;cursor:pointer;}
   .post-top{display:flex;gap:6px;align-items:center;font-size:10.5px;color:var(--sub);margin-bottom:3px;}
   .post-ch{font-weight:700;color:var(--text);}
   .post-top a{margin-left:auto;color:var(--info);text-decoration:none;white-space:nowrap;}
-  .post-text{font-size:12px;line-height:1.55;white-space:pre-line;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:9;-webkit-box-orient:vertical;overflow:hidden;}
+  .post-text{font-size:12.5px;line-height:1.65;white-space:pre-line;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:12;-webkit-box-orient:vertical;overflow:hidden;}
   .post.open .post-text{display:block;}
   .post .link-btn{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .drawer-back{position:fixed;inset:0;background:#0006;z-index:20;display:none;}
@@ -426,7 +440,40 @@ function hl(raw){
 
 // 설명 맨 앞의 "[BEAT]"/"[MISS]"/"[혼조]"/"[IN-LINE]" 표시는 색깔 글자로(줄바꿈은 CSS white-space:pre-line이 처리)
 const VERDICT_VAR = {BEAT:"--beat", MISS:"--miss", "혼조":"--note", "IN-LINE":"--sub"};
+// ── 읽기 좋게 나누기(2026-11-28, 사용자: "띄어쓰기랑 가독성이 너무 안 좋다") ──
+// 문장은 한 글자도 안 바꾸고 모양만 바꿈: 통문단을 문장 단위 불릿으로 끊고 불릿 사이를 띄움.
+// 문장 끝은 "한글/닫는 괄호/% 뒤의 마침표 + 띄어쓰기"만 인정(소수점, "vs.", "U.S." 같은 건 안 끊음).
+function splitSentences(line){
+  return String(line).split(/(?<=[가-힣)\]"'”’%][.!?])\s+/).map(s=>s.trim()).filter(Boolean);
+}
+function noteLines(text){
+  return String(text || "").split("\n").map(l=>l.replace(/^[-•·*▪◦]\s*/, "").trim()).filter(Boolean).flatMap(splitSentences);
+}
+// "섹터 톤: …", "TP: …"처럼 말머리가 있는 줄은 말머리를 굵게
+function lineHtml(line){
+  const m = decodeEnt(line).match(/^([^:：\s][^:：]{0,11})[:：]\s+(.+)$/s);
+  return m ? `<span class="note-label">${esc(m[1])}</span> ${hl(m[2])}` : hl(line);
+}
 function noteHtml(text){
+  let body = String(text || "");
+  let verdict = "";
+  const m = body.match(/^\[(BEAT|MISS|혼조|IN-LINE)\]\s*/);
+  if (m){
+    verdict = `<div class="sig-verdict" style="color:var(${VERDICT_VAR[m[1]]||"--sub"})">${m[1]}</div>`;
+    body = body.slice(m[0].length);
+  }
+  const lines = noteLines(body);
+  return verdict + (lines.length ? `<ul class="note">${lines.map(l=>`<li>${lineHtml(l)}</li>`).join("")}</ul>` : "");
+}
+// 옛 글은 줄바꿈이 지워진 채 저장돼 있음 — 줄바꿈이 하나도 없는 긴 글은 불릿 기호 앞과 문장 끝에서 줄을 나눠서 보여줌
+// (2026-11-28부터 수집되는 글은 원래 줄바꿈이 살아 있어서 그대로 보여줌)
+function postText(raw){
+  const s = decodeEnt(raw);
+  if (s.includes("\n") || s.length < 120) return s;
+  return s.replace(/\s+(?=[•▶▷■□◆◇▪●✅✔☑📌🔹🔸➡※]|>>|\d{1,2}[.)]\s)/gu, "\n")
+    .split("\n").flatMap(l=> l.length > 160 ? splitSentences(l) : [l]).join("\n");
+}
+function noteInline(text){
   let body = String(text || "");
   let verdict = "";
   const m = body.match(/^\[(BEAT|MISS|혼조|IN-LINE)\]\s*/);
@@ -476,7 +523,8 @@ function clusterView(c){
   }
   sources.sort((a,b)=> new Date(b.published_at) - new Date(a.published_at));
   const hay = [c.headline, ...(c.targets||[]), ...notes.map(n=>n.note), ...facts].join(" ").toLowerCase();
-  c._v = {stamp, facts, notes, sources, hay};
+  const reason = String((ups.find(u=>u.reason) || {}).reason || "");
+  c._v = {stamp, facts, notes, sources, hay, reason};
   return c._v;
 }
 
@@ -516,19 +564,19 @@ function eventHtml(c, groupKey){
     body += `<div class="sig-why">${noteHtml(v.notes[0].note)}</div>`;
     // 숫자 목록이 없는 옛 카드는 예전 설명들에 숫자가 들어 있으니 전부 보여줌(예전엔 마지막 설명 하나만 보였음)
     if (!v.facts.length){
-      body += v.notes.slice(1).map(n=>`<div class="sig-why old-note"><span class="sig-timeline-time">${kstTimeLabel(n.at)}</span>${noteHtml(n.note)}</div>`).join("");
+      body += v.notes.slice(1).map(n=>`<div class="sig-why old-note"><div class="note-time">${kstTimeLabel(n.at)} 설명</div>${noteHtml(n.note)}</div>`).join("");
     }
   }
-  if (v.facts.length) body += `<ul class="facts">${v.facts.map(f=>`<li>${hl(f)}</li>`).join("")}</ul>`;
+  if (v.facts.length) body += `<div class="facts-label">숫자·사실</div><ul class="facts">${v.facts.map(f=>`<li>${hl(f)}</li>`).join("")}</ul>`;
   if (!v.notes.length && !v.facts.length){
     // 설명이 아예 없는 카드(옛 "낮음" 카드)는 원문 앞부분을 그대로 보여줌
     const first = v.sources.map(s=>tgByUrl.get(s.url)).find(Boolean);
-    if (first && first.summary) body += `<div class="excerpt">${hl(String(first.summary).slice(0, 400))}</div>`;
+    if (first && first.summary) body += `<div class="excerpt">${hl(postText(String(first.summary).slice(0, 400)))}</div>`;
   }
   const more = v.facts.length && v.notes.length > 1 ? ` · 설명 이력 ${v.notes.length}건` : "";
   return `
     <div class="sig-subitem">
-      <div class="sig-subitem-top">${impactBadge(c.impact, true)}${chips}<span class="sig-src">${kstTimeLabel(c.updated_at)}</span></div>
+      <div class="sig-subitem-top">${impactBadge(c.impact, true)}${v.reason ? `<span class="impact-reason">${esc(v.reason)}</span>` : ""}${chips}<span class="sig-src">${kstTimeLabel(c.updated_at)}</span></div>
       <div class="sig-subitem-title">${newBadge(c.updated_at)}${esc(decodeEnt(c.headline))}</div>
       ${body}
       <button class="link-btn" data-open="${esc(c.id)}">원문 ${v.sources.length}건${more} 보기 ›</button>
@@ -600,7 +648,7 @@ function hotListHtml(clusters){
     const keyHtml = headline.startsWith(key) ? "" : `<span class="hot-key">${esc(key)}</span>`;
     return `<div class="hot-row">${newBadge(c.updated_at)}<span class="hot-time">${kstTimeLabel(c.updated_at)}</span>${keyHtml}`
       + `<button class="link-btn" data-open="${esc(c.id)}">${esc(headline)}</button>`
-      + (why ? `<div class="hot-why">${noteHtml(why)}</div>` : "")
+      + (why ? `<div class="hot-why">${noteInline(why)}</div>` : "")
       + `</div>`;
   }).join("");
   return `<div class="hot-box"><div class="hot-title">지금 중요한 것 · 높음 ${hot.length}건${nNew ? ` (새로 ${nNew}건)` : ""}</div><div class="hot-rows">${rows}</div></div>`;
@@ -617,7 +665,7 @@ function postHtml(it, inDrawer){
     <div class="post${openPosts.has(it.url) ? " open" : ""}" data-post="${esc(it.url)}">
       <div class="post-top">${inDrawer ? "" : badge}<span class="post-ch">${esc(ch)}</span><span>${inDrawer ? kstFullLabel(it.published_at) : kstTimeLabel(it.published_at)}</span>
         <a href="${safeUrl(it.url)}" target="_blank" rel="noopener">텔레그램에서 열기 ↗</a></div>
-      <div class="post-text">${hl(it.summary || it.title || "")}</div>
+      <div class="post-text">${hl(postText(it.summary || it.title || ""))}</div>
       ${into}
     </div>`;
 }
@@ -642,10 +690,10 @@ async function openDrawer(id){
   const targets = (c.targets||[]).map(t=>`<span class="sig-target">${esc(t)}</span>`).join(" ");
   const factsHtml = v.facts.length ? `<h3>숫자·사실 ${v.facts.length}줄</h3><ul class="facts">${v.facts.map(f=>`<li>${hl(f)}</li>`).join("")}</ul>` : "";
   const notesHtml = v.notes.length
-    ? `<h3>설명 이력 ${v.notes.length}건 (최근 것부터)</h3>` + v.notes.map(n=>`<div class="sig-why" style="margin-bottom:8px"><span class="sig-timeline-time">${kstTimeLabel(n.at)}</span>${noteHtml(n.note)}</div>`).join("")
+    ? `<h3>설명 이력 ${v.notes.length}건 (최근 것부터)</h3>` + v.notes.map(n=>`<div class="sig-why old-note"><div class="note-time">${kstTimeLabel(n.at)} 설명</div>${noteHtml(n.note)}</div>`).join("")
     : "";
   const head = `<button class="drawer-close" id="drawer-close">닫기 ✕</button>
-    <div class="sig-top" style="margin-bottom:6px">${impactBadge(c.impact)}<span class="sig-source-meta">마지막 업데이트 ${kstFullLabel(c.updated_at)}</span></div>
+    <div class="sig-top" style="margin-bottom:6px">${impactBadge(c.impact)}${v.reason ? `<span class="impact-reason">${esc(v.reason)}</span>` : ""}<span class="sig-source-meta">마지막 업데이트 ${kstFullLabel(c.updated_at)}</span></div>
     <h2>${esc(decodeEnt(c.headline))}</h2>
     <div class="sig-top">${targets}</div>
     ${factsHtml}${notesHtml}

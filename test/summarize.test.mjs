@@ -183,3 +183,11 @@ test("'기타 소식 모음' 같은 잡동사니 통은 만들지 않고 글 하
   assert.equal(fresh.length, 3, "글 3개가 카드 3개로 따로");
   assert.equal(db.DB.clusters.find(c => c.id === 900).sources.length, 1, "옛 통은 그대로");
 });
+
+test("중요도 이유 한마디(impact_reason)를 카드 이력에 남김", async () => {
+  db.DB.items.push(tgItem(1, microIso(NOW - 60e3)));
+  answerWith(() => [{ indices: [1], existing_cluster_ref: 0, headline: "HBM 시장 전망 상향", impact: "high", impact_reason: "전망치 변경", targets: ["HBM"], note: "한 줄", facts: [] }]);
+  await press(false);
+  assert.equal(db.DB.clusters[0].impact, "high");
+  assert.equal(db.DB.clusters[0].updates[0].reason, "전망치 변경");
+});

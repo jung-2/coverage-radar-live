@@ -269,7 +269,11 @@ const UPDATE_TOOL = {
             impact: {
               type: "string",
               enum: ["high", "medium", "low"],
-              description: "이 클러스터의 지금 시점 기준 종합 중요도. 특정 종목/산업에 실질적 영향이 있는지로 판단. 이미 알려진 내용의 반복, 잡담성 내용은 low",
+              description: "이 클러스터의 중요도. 프롬프트의 [impact 규칙]대로: high = 숫자가 바뀌는 것(전망치·추정치 변경, 판도를 바꿀 이벤트, 숫자로 뒷받침된 새 의견), medium = 새 정보지만 숫자 근거가 약하거나 파급이 한 회사에 그침, low = 새 의견도 숫자 변화도 없는 반복·잡담·시황 중계",
+            },
+            impact_reason: {
+              type: "string",
+              description: "왜 이 중요도인지 10자 안팎 한마디. high/medium이면 다음 중 하나로: \"전망치 변경\", \"판도 이벤트\", \"새 의견+숫자\", \"실적·추정치 변경\", \"가격·수급 변화\", \"새 의견(숫자 없음)\", \"개별 회사 소식\". low면 \"반복\", \"잡담\", \"시황 중계\", \"홍보\" 등",
             },
             targets: {
               type: "array",
@@ -287,7 +291,7 @@ const UPDATE_TOOL = {
               description: "이 update에 속한 원문에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부 옮겨 적은 목록(중요도와 상관없이 채움). 예: \"3분기 매출 1,155.6억위안(+21.6% YoY), 컨센서스 1,133.7억위안 상회\", \"TP 30만원 → 35만원\", \"GPU 32만 5천 개를 월 12.5억 달러에 임대\". 숫자·단위·회사명·제품명은 원문 표기 그대로(AI5, HBM4, $3.50/kWh — 한글로 풀어 쓰지 말 것). 원문에 숫자가 있으면 하나도 빼지 말 것. 원문에 없는 숫자를 만들지 말 것. 숫자나 구체적 사실이 전혀 없는 잡담이면 빈 배열",
             },
           },
-          required: ["indices", "existing_cluster_ref", "headline", "impact", "targets", "note", "facts"],
+          required: ["indices", "existing_cluster_ref", "headline", "impact", "impact_reason", "targets", "note", "facts"],
         },
       },
     },
@@ -619,7 +623,17 @@ ${newLines}
 - headline은 existing_cluster_ref가 0일 때만 채울 것 — 새 클러스터의 핵심을 담은 새 한 줄 제목. 회사 단위면 회사명으로 시작, 섹터 단위면 섹터/테마명으로 시작. 원문 헤드라인을 그대로 복사하지 말고 새로 정리해서 쓸 것. 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것
 
 [impact 규칙]
-- impact는 이 클러스터가 특정 종목이나 산업에 실질적인 영향을 줄 수 있는지로 판단. 이미 알려진 내용의 반복, 일반적인 시황 잡담, 영향이 불분명한 내용은 low
+(2026-11-28 사용자가 직접 정한 기준 — 핵심은 "숫자가 바뀌는 것"이 중요하다는 것. 특정 회사 목록이 아니라 산업(섹터) 전체 관점에서 판단할 것)
+- high: 아래 중 하나에 해당하고, 원문에 그걸 보여주는 구체적 숫자나 사실이 있을 때
+  · 시장·산업 전체의 숫자 전망치가 바뀜(시장 규모, capex, 출하량, 가격, 수요·공급 전망의 상향/하향)
+  · 산업의 판도를 크게 바꿀 수 있는 이벤트(규제·관세·수출통제, 대형 계약·인수합병, 기술 전환, 공급 차질, 큰 고객의 발주·투자 계획 변경 등)
+  · 특정 산업에 대한 새로운 의견인데 그걸 뒷받침하는 숫자가 같이 나옴(기존에 알려진 시각과 다른 뷰 + 근거 숫자)
+  · 실적·가이던스·추정치·목표주가처럼 숫자가 실제로 바뀌었고, 그 변화가 그 회사 하나가 아니라 산업 전체 흐름을 말해 줌(업계 대표 회사의 실적 서프라이즈, 여러 회사 추정치 동시 변경 등)
+- medium: 새 정보이긴 하지만 high에는 못 미치는 것 — 새로운 의견인데 뒷받침 숫자가 없음 / 숫자 변화가 있지만 파급이 그 회사 하나에 그침 / 이미 알려진 흐름을 새 숫자로 다시 확인해 준 정도
+- low: 새로운 의견도 숫자 변화도 없는 것 — 이미 나온 내용의 반복·재전달, 주가·지수 등락만 전하는 시황 중계, 개인 감상·잡담, 홍보·공지, 일정 안내
+- 헷갈리면 이렇게 물어볼 것: "이 글을 읽고 나서 바꿔야 할 숫자(전망·추정·가정)가 있는가?" 있으면 high 쪽, 생각은 바뀌는데 숫자는 아직이면 medium, 아무것도 안 바뀌면 low
+- 주가가 많이 올랐다/내렸다는 것만으로는 high가 아님(왜 움직였는지 새 숫자·사건이 있어야 함). 글이 길거나 유명한 사람이 썼다는 것도 이유가 안 됨
+- impact_reason에 왜 그 중요도인지 한마디로 적을 것(도구 설명의 보기 중에서 고름)
 
 [note 작성 규칙 — 매우 중요, 아래 형식을 반드시 지킬 것]
 note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 한 줄이면 됨. medium/high는 아래 세 유형 중 해당하는 형식을 따르고, 유형마다 줄바꿈(\\n)으로 항목을 구분할 것:
@@ -707,6 +721,8 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
         idxList.forEach(i => seen.add(i));
 
         const impact = ["high", "medium", "low"].includes(u.impact) ? u.impact : "low";
+        // 왜 그 중요도인지 한마디(2026-11-28 추가) — 화면 카드의 중요도 옆에 작게 보여줘서, 기준이 틀렸을 때 바로 알아볼 수 있게 함
+        const reason = typeof u.impact_reason === "string" ? u.impact_reason.replace(/\s+/g, " ").trim().slice(0, 30) : "";
         const targets = Array.isArray(u.targets) ? u.targets.filter(Boolean) : [];
         const note = typeof u.note === "string" ? u.note.trim() : "";
         const facts = cleanFacts(u.facts);
@@ -721,11 +737,12 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
           if (note) g.notes.push(note);
           g.facts.push(...facts);
           g.impacts.push(impact);
+          if (reason && IMPACT_RANK[impact] >= IMPACT_RANK[g.reasonImpact || "low"]) { g.reason = reason; g.reasonImpact = impact; }
         } else if (isJunkBucket(u.headline) && idxList.length > 1) {
           // 관련 없는 글을 한 통에 몰아넣으려 한 것 → 글 하나씩 따로(설명은 섞여 있어서 못 씀. 원문은 화면에서 바로 열어 볼 수 있음)
           for (const i of idxList) newEntries.push({ idxList: [i], headline: items[i - 1].title, targets: [], impact: "low", note: "", facts: [] });
         } else {
-          newEntries.push({ idxList, headline: u.headline, targets, impact, note, facts });
+          newEntries.push({ idxList, headline: u.headline, targets, impact, note, facts, reason });
         }
       }
 
@@ -746,7 +763,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
           entry.targets.forEach(t => { if (!match.targets.includes(t)) match.targets.push(t); });
           if (entry.note) match.note = match.note ? `${match.note}\n${entry.note}` : entry.note;
           match.facts = cleanFacts([...match.facts, ...entry.facts]);
-          if (IMPACT_RANK[entry.impact] > IMPACT_RANK[match.impact]) match.impact = entry.impact;
+          if (IMPACT_RANK[entry.impact] > IMPACT_RANK[match.impact]) { match.impact = entry.impact; match.reason = entry.reason; }
         } else {
           mergedNewEntries.push({ ...entry, targets: [...entry.targets], facts: [...entry.facts] });
         }
@@ -778,6 +795,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
           if (entry.note) target.notes.push(entry.note);
           target.facts.push(...entry.facts);
           target.impacts.push(entry.impact);
+          if (entry.reason && IMPACT_RANK[entry.impact] >= IMPACT_RANK[target.reasonImpact || "low"]) { target.reason = entry.reason; target.reasonImpact = entry.impact; }
         } else {
           finalNewEntries.push(entry);
         }
@@ -810,7 +828,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
         const mergedUpdates = [...(current.updates || [])];
         const mergedFacts = cleanFacts(g.facts);
         if (mergedNote || mergedFacts.length) {
-          mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, ...(mergedFacts.length ? { facts: mergedFacts } : {}), run_at: runAtIso });
+          mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, ...(mergedFacts.length ? { facts: mergedFacts } : {}), ...(g.reason ? { reason: g.reason } : {}), run_at: runAtIso });
         }
 
         const { error: updErr } = await sb
@@ -848,7 +866,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
             targets,
             why: e.note,
             sources,
-            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", ...(e.facts.length ? { facts: e.facts } : {}), run_at: runAtIso }],
+            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", ...(e.facts.length ? { facts: e.facts } : {}), ...(e.reason ? { reason: e.reason } : {}), run_at: runAtIso }],
             created_at: createdAt.toISOString(),
             updated_at: createdAt.toISOString(),
           };
