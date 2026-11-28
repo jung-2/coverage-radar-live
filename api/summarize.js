@@ -61,7 +61,7 @@
 //
 // AI 모델 변경(2026-10-25): 비용 때문에 Claude Haiku → Google Gemini 무료 등급으로 바꿈.
 // 무료 등급은 분당/하루 호출 횟수 한도가 있음(하루 한도는 미국 서부 자정 = 한국 오후 4~5시에 초기화).
-// 요약 품질이 아쉬우면 MODEL만 "gemini-3.8-flash"로 바꾸면 됨(대신 무료 한도가 더 빡빡함).
+// (2026-11-28) 모델은 이제 자동으로 고름 — 아래 resolveModels 참고.
 //
 // 참고: vercel.json에 이 함수의 maxDuration을 300초(Vercel 무료 플랜 최대치)로 설정해둬야
 // 백로그가 많이 밀렸을 때 여러 배치를 이어서 처리할 시간이 확보됨.
@@ -70,7 +70,52 @@ import { createClient } from "@supabase/supabase-js";
 
 // (2026-11-28) 사용자 결정: 무료 등급 안에서 윗급 모델로 올림(flash-lite → flash). 무료 한도가 더 빡빡해서
 // 429(한도 초과)가 자주 나면 "gemini-3.5-flash-lite"로 되돌릴 것.
-const MODEL = "gemini-3.8-flash";
+// (2026-11-28) 사용자 요청: "무료 버전 나올 때마다 자동으로 업그레이드". 모델 이름을 코드에 박아 두지 않고,
+// 하루에 한 번 Gemini의 모델 목록을 받아서 가장 새 버전의 flash 모델을 골라 씀(아래 resolveModels).
+// 순서: 가장 새 flash → 가장 새 flash-lite → 아래 FALLBACK_MODEL. 앞 모델이 없거나(404) 무료 한도에 걸리면(429)
+// 그 호출은 다음 모델로 넘어가서 요약이 멈추지 않게 함. 고른 결과는 status 테이블 id 4 줄에 하루 동안 기억해 둠.
+// 미리보기(-preview)·실험(-exp) 모델은 이름이 자주 사라져서 안 씀. 목록에는 "무료인지"가 안 나와서, 새 flash가
+// 무료 등급에 없으면 404/429로 자동으로 밀려남.
+const FALLBACK_MODEL = "gemini-3.5-flash-lite";
+const MODEL_LIST_ID = 4;                       // status 테이블: 고른 모델 목록(JSON)과 고른 시각
+const MODEL_LIST_TTL_MS = 24 * 60 * 60 * 1000; // 하루에 한 번만 목록을 다시 받음
+const MODEL_COOLDOWN_MS = 10 * 60 * 1000;      // 404/429가 난 모델은 이 시간 동안 건너뜀(매번 다시 실패하며 시간 쓰지 않게)
+const modelCooldown = new Map();               // 모델 이름 → 다시 써 볼 시각
+let lastModelUsed = "";
+
+// 모델 목록에서 쓸 후보를 순서대로 고름(시험하기 쉽게 따로 뺌)
+export function pickModels(models) {
+  const found = { flash: null, lite: null };
+  for (const m of Array.isArray(models) ? models : []) {
+    if (!(m.supportedGenerationMethods || []).includes("generateContent")) continue;
+    const hit = String(m.name || "").match(/^models\/(gemini-(\d+)\.(\d+)-flash(-lite)?)$/); // 정식 이름만(-preview, -exp, -latest 등 제외)
+    if (!hit) continue;
+    const kind = hit[4] ? "lite" : "flash";
+    const ver = Number(hit[2]) * 1000 + Number(hit[3]);
+    if (!found[kind] || ver > found[kind].ver) found[kind] = { id: hit[1], ver };
+  }
+  return [...new Set([found.flash?.id, found.lite?.id, FALLBACK_MODEL].filter(Boolean))];
+}
+
+async function resolveModels(sb, apiKey) {
+  try {
+    const { data: row } = await sb.from("status").select("id, last_run_at, last_note").eq("id", MODEL_LIST_ID).maybeSingle();
+    if (row && row.last_run_at && Date.now() - new Date(row.last_run_at).getTime() < MODEL_LIST_TTL_MS) {
+      const saved = JSON.parse(row.last_note || "[]");
+      if (Array.isArray(saved) && saved.length) return saved;
+    }
+    const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", { headers: { "x-goog-api-key": apiKey } });
+    if (!res.ok) throw new Error(`모델 목록 ${res.status}`);
+    const picked = pickModels((await res.json()).models);
+    const { error } = await sb.from("status").upsert(
+      { id: MODEL_LIST_ID, last_run_at: new Date().toISOString(), last_note: JSON.stringify(picked) }, { onConflict: "id" });
+    if (error) console.error("모델 목록 저장 실패(무시):", error.message);
+    return picked;
+  } catch (err) {
+    console.error("모델 목록 확인 실패 — 기본 모델로 진행:", err.message);
+    return [FALLBACK_MODEL];
+  }
+}
 const MAX_ITEMS = 40;               // 한 배치당 분류할 최대 신규 항목 수(비용/토큰 제한용 + 응답 길이 제한용)
                                      // (2026-09-27 150→75, 2026-10-23 75→40: 배치가 크면 응답이 길어져서 한 번에
                                      // 1~2분씩 걸리고 형식 오류도 잦았음 — 작게 끊어서 빨리빨리 여러 번 처리하는 게 나음)
@@ -349,7 +394,28 @@ const TELEGRAM_SPLIT_TOOL = {
 // 도구(function) 하나를 반드시 호출하게 강제해서(mode: ANY) 구조화된 JSON 결과만 받음 — Claude 때의 tool_choice와 같은 역할.
 // 반환값: { args(도구 입력값 객체, 없으면 null), finishReason }
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+// 후보 모델을 순서대로 써 봄: 없는 모델(404)이거나 한도 초과(429)면 다음 모델로. 마지막 후보의 오류는 그대로 던짐.
+let modelCandidates = null; // 이번 실행에서 쓸 후보(처음 AI를 부를 때 한 번만 정함)
+let modelDb = null;
 async function callGemini(apiKey, tool, prompt, maxTokens) {
+  if (!modelCandidates) modelCandidates = await resolveModels(modelDb, apiKey);
+  const now = Date.now();
+  const usable = modelCandidates.filter(m => !(modelCooldown.get(m) > now));
+  const order = usable.length ? usable : [modelCandidates[modelCandidates.length - 1]];
+  for (let i = 0; i < order.length; i++) {
+    try {
+      const out = await callGeminiModel(order[i], apiKey, tool, prompt, maxTokens);
+      lastModelUsed = order[i];
+      return out;
+    } catch (err) {
+      const skippable = err.status === 404 || err.status === 429;
+      if (!skippable || i === order.length - 1) throw err;
+      modelCooldown.set(order[i], Date.now() + MODEL_COOLDOWN_MS);
+      console.error(`${order[i]} 사용 불가(${err.status}) — ${order[i + 1]}(으)로 넘어감`);
+    }
+  }
+}
+async function callGeminiModel(MODEL, apiKey, tool, prompt, maxTokens) {
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     tools: [{ functionDeclarations: [{
@@ -386,7 +452,9 @@ async function callGemini(apiKey, tool, prompt, maxTokens) {
       continue;
     }
     const hint = apiRes.status === 429 ? " (무료 한도 초과 — 잠시 후, 하루 한도면 한국 시간 오후 4~5시 이후 다시 시도)" : "";
-    throw new Error(`Gemini API 오류 ${apiRes.status}${hint}: ${errBody.slice(0, 500)}`);
+    const apiErr = new Error(`Gemini API 오류 ${apiRes.status}${hint}: ${errBody.slice(0, 500)}`);
+    apiErr.status = apiRes.status;
+    throw apiErr;
   }
 }
 
@@ -1000,13 +1068,14 @@ export default async function handler(req, res) {
   let code = 200, body = {};
   const capture = { status(c) { code = c; return capture; }, json(j) { body = j; } };
   try {
+    modelCandidates = null; modelDb = sb; lastModelUsed = "";
     await summarizeCore(req, capture, sb, GEMINI_API_KEY);
   } catch (err) {
     code = 500; body = { error: String(err.message || err) };
   }
   const note = code !== 200 ? `오류: ${body.error || code}`
     : body.skipped ? "새 글 없음"
-    : `${body.item_count}건 정리(새 카드 ${body.new_clusters}개, 갱신 ${body.updated_clusters}개)` + (body.has_more_backlog ? " · 밀린 것 남음" : "");
+    : `${body.item_count}건 정리(새 카드 ${body.new_clusters}개, 갱신 ${body.updated_clusters}개)` + (body.has_more_backlog ? " · 밀린 것 남음" : "") + (lastModelUsed ? ` · ${lastModelUsed}` : "");
   await releaseLock(sb, note);
   res.status(code).json(body);
 }

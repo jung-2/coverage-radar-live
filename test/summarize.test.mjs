@@ -17,8 +17,15 @@ let geminiCalls = 0;
 function geminiOk(args) {
   return { ok: true, json: async () => ({ candidates: [{ finishReason: "STOP", content: { parts: [{ functionCall: { name: args.__name, args } }] } }] }) };
 }
+let modelList = [];   // 가짜 모델 목록(비어 있으면 기본 모델만 씀)
+let modelsTried = [];  // 요약 호출에 쓰인 모델 이름들
+let missingModels = new Set(); // 이 모델은 404로 답함
 globalThis.fetch = async (url, opt) => {
   assert.match(String(url), /generativelanguage\.googleapis\.com/);
+  if (!opt || !opt.body) return { ok: true, json: async () => ({ models: modelList }) };
+  const usedModel = String(url).match(/models\/([^:]+):/)[1];
+  modelsTried.push(usedModel);
+  if (missingModels.has(usedModel)) return { ok: false, status: 404, text: async () => "model not found" };
   geminiCalls++;
   const body = JSON.parse(opt.body);
   const name = body.tools[0].functionDeclarations[0].name;
@@ -54,7 +61,7 @@ async function press(continuation) {
 }
 const clusterUrls = () => db.DB.clusters.flatMap(c => c.sources.map(s => s.url));
 
-beforeEach(() => { db = makeDb(); script = []; geminiCalls = 0; });
+beforeEach(() => { db = makeDb(); script = []; geminiCalls = 0; modelList = []; modelsTried = []; missingModels = new Set(); });
 
 test("같은 시각에 몰려 들어온 100건을 빠짐없이 한 번씩만 처리하고, 키워드 뉴스는 건드리지 않음", async () => {
   const at = microIso(NOW - 1800e3);
@@ -138,6 +145,7 @@ test("48시간보다 오래된 백로그는 건너뜀", async () => {
 function answerWith(makeUpdates) {
   const prev = globalThis.fetch;
   globalThis.fetch = async (url, opt) => {
+    if (!opt || !opt.body) return prev(url, opt);
     const body = JSON.parse(opt.body);
     const name = body.tools[0].functionDeclarations[0].name;
     if (name !== "emit_updates") return prev(url, opt);
@@ -190,4 +198,39 @@ test("중요도 이유 한마디(impact_reason)를 카드 이력에 남김", asy
   await press(false);
   assert.equal(db.DB.clusters[0].impact, "high");
   assert.equal(db.DB.clusters[0].updates[0].reason, "전망치 변경");
+});
+
+// ── 2026-11-28 추가: Gemini 모델 자동 고르기 ──
+const gm = (name, methods = ["generateContent"]) => ({ name: `models/${name}`, supportedGenerationMethods: methods });
+
+test("모델 목록에서 가장 새 flash를 고르고, 하루 동안은 목록을 다시 받지 않음", async () => {
+  modelList = [gm("gemini-3.5-flash"), gm("gemini-3.8-flash"), gm("gemini-4.0-flash"), gm("gemini-4.0-flash-lite"),
+    gm("gemini-4.5-flash-preview"), gm("gemini-9.9-flash", ["embedContent"]), gm("gemini-4.0-pro")];
+  db.DB.items.push(tgItem(1, microIso(NOW - 120e3)));
+  await press(false);
+  assert.equal(new Set(modelsTried).size, 1);
+  assert.equal(modelsTried[0], "gemini-4.0-flash", "미리보기·pro·요약 못 하는 모델은 안 고름");
+  assert.deepEqual(JSON.parse(db.DB.status.find(r => r.id === 4).last_note), ["gemini-4.0-flash", "gemini-4.0-flash-lite", "gemini-3.5-flash-lite"]);
+  assert.match(db.DB.status.find(r => r.id === 3).last_note, /gemini-4\.0-flash$/);
+
+  modelList = [gm("gemini-5.0-flash")]; // 새 모델이 나와도 하루가 지나기 전엔 그대로
+  modelsTried = [];
+  db.DB.items.push(tgItem(2, microIso(NOW - 60e3)));
+  await press(true);
+  assert.equal(modelsTried[0], "gemini-4.0-flash");
+  db.DB.status.find(r => r.id === 4).last_run_at = new Date(NOW - 25 * 3600e3).toISOString(); // 하루 지남
+  modelsTried = [];
+  db.DB.items.push(tgItem(3, microIso(NOW - 30e3)));
+  await press(true);
+  assert.equal(modelsTried[0], "gemini-5.0-flash");
+});
+
+test("고른 모델을 무료로 못 쓰면(404) 다음 모델로 넘어가서 요약은 계속됨", async () => {
+  modelList = [gm("gemini-7.0-flash"), gm("gemini-7.0-flash-lite")];
+  missingModels = new Set(["gemini-7.0-flash"]);
+  db.DB.items.push(tgItem(1, microIso(NOW - 60e3)));
+  const r = await press(false);
+  assert.equal(r.code, 200);
+  assert.equal(clusterUrls().length, 1);
+  assert.equal(modelsTried.at(-1), "gemini-7.0-flash-lite");
 });
