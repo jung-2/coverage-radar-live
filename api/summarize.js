@@ -278,6 +278,19 @@ function distinctDayKeys(items) {
   return Array.from(set);
 }
 
+// 중요도 기준 — 새 글 정리(아래 프롬프트)와 옛 카드 다시 보기(rescoreOldClusters)가 같이 씀. 기준을 바꾸려면 여기만 고치면 됨
+const IMPACT_RULES = `(2026-11-28 사용자가 직접 정한 기준 — 핵심은 "숫자가 바뀌는 것"이 중요하다는 것. 특정 회사 목록이 아니라 산업(섹터) 전체 관점에서 판단할 것)
+- high: 아래 중 하나에 해당하고, 원문에 그걸 보여주는 구체적 숫자나 사실이 있을 때
+  · 시장·산업 전체의 숫자 전망치가 바뀜(시장 규모, capex, 출하량, 가격, 수요·공급 전망의 상향/하향)
+  · 산업의 판도를 크게 바꿀 수 있는 이벤트(규제·관세·수출통제, 대형 계약·인수합병, 기술 전환, 공급 차질, 큰 고객의 발주·투자 계획 변경 등)
+  · 특정 산업에 대한 새로운 의견인데 그걸 뒷받침하는 숫자가 같이 나옴(기존에 알려진 시각과 다른 뷰 + 근거 숫자)
+  · 실적·가이던스·추정치·목표주가처럼 숫자가 실제로 바뀌었고, 그 변화가 그 회사 하나가 아니라 산업 전체 흐름을 말해 줌(업계 대표 회사의 실적 서프라이즈, 여러 회사 추정치 동시 변경 등)
+- medium: 새 정보이긴 하지만 high에는 못 미치는 것 — 새로운 의견인데 뒷받침 숫자가 없음 / 숫자 변화가 있지만 파급이 그 회사 하나에 그침 / 이미 알려진 흐름을 새 숫자로 다시 확인해 준 정도
+- low: 새로운 의견도 숫자 변화도 없는 것 — 이미 나온 내용의 반복·재전달, 주가·지수 등락만 전하는 시황 중계, 개인 감상·잡담, 홍보·공지, 일정 안내
+- 헷갈리면 이렇게 물어볼 것: "이 글을 읽고 나서 바꿔야 할 숫자(전망·추정·가정)가 있는가?" 있으면 high 쪽, 생각은 바뀌는데 숫자는 아직이면 medium, 아무것도 안 바뀌면 low
+- 주가가 많이 올랐다/내렸다는 것만으로는 high가 아님(왜 움직였는지 새 숫자·사건이 있어야 함). 글이 길거나 유명한 사람이 썼다는 것도 이유가 안 됨
+- impact_reason에 왜 그 중요도인지 한마디로 적을 것(도구 설명의 보기 중에서 고름)`;
+
 const UPDATE_TOOL = {
   name: "emit_updates",
   description:
@@ -695,17 +708,7 @@ ${newLines}
 - headline은 existing_cluster_ref가 0일 때만 채울 것 — 새 클러스터의 핵심을 담은 새 한 줄 제목. 회사 단위면 회사명으로 시작, 섹터 단위면 섹터/테마명으로 시작. 원문 헤드라인을 그대로 복사하지 말고 새로 정리해서 쓸 것. 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것
 
 [impact 규칙]
-(2026-11-28 사용자가 직접 정한 기준 — 핵심은 "숫자가 바뀌는 것"이 중요하다는 것. 특정 회사 목록이 아니라 산업(섹터) 전체 관점에서 판단할 것)
-- high: 아래 중 하나에 해당하고, 원문에 그걸 보여주는 구체적 숫자나 사실이 있을 때
-  · 시장·산업 전체의 숫자 전망치가 바뀜(시장 규모, capex, 출하량, 가격, 수요·공급 전망의 상향/하향)
-  · 산업의 판도를 크게 바꿀 수 있는 이벤트(규제·관세·수출통제, 대형 계약·인수합병, 기술 전환, 공급 차질, 큰 고객의 발주·투자 계획 변경 등)
-  · 특정 산업에 대한 새로운 의견인데 그걸 뒷받침하는 숫자가 같이 나옴(기존에 알려진 시각과 다른 뷰 + 근거 숫자)
-  · 실적·가이던스·추정치·목표주가처럼 숫자가 실제로 바뀌었고, 그 변화가 그 회사 하나가 아니라 산업 전체 흐름을 말해 줌(업계 대표 회사의 실적 서프라이즈, 여러 회사 추정치 동시 변경 등)
-- medium: 새 정보이긴 하지만 high에는 못 미치는 것 — 새로운 의견인데 뒷받침 숫자가 없음 / 숫자 변화가 있지만 파급이 그 회사 하나에 그침 / 이미 알려진 흐름을 새 숫자로 다시 확인해 준 정도
-- low: 새로운 의견도 숫자 변화도 없는 것 — 이미 나온 내용의 반복·재전달, 주가·지수 등락만 전하는 시황 중계, 개인 감상·잡담, 홍보·공지, 일정 안내
-- 헷갈리면 이렇게 물어볼 것: "이 글을 읽고 나서 바꿔야 할 숫자(전망·추정·가정)가 있는가?" 있으면 high 쪽, 생각은 바뀌는데 숫자는 아직이면 medium, 아무것도 안 바뀌면 low
-- 주가가 많이 올랐다/내렸다는 것만으로는 high가 아님(왜 움직였는지 새 숫자·사건이 있어야 함). 글이 길거나 유명한 사람이 썼다는 것도 이유가 안 됨
-- impact_reason에 왜 그 중요도인지 한마디로 적을 것(도구 설명의 보기 중에서 고름)
+${IMPACT_RULES}
 
 [note 작성 규칙 — 매우 중요, 아래 형식을 반드시 지킬 것]
 note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 한 줄이면 됨. medium/high는 아래 세 유형 중 해당하는 형식을 따르고, 유형마다 줄바꿈(\\n)으로 항목을 구분할 것:
@@ -732,6 +735,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
 
 모든 유형 공통: 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것
 - 실제로 있었던 나쁜 예: "AI5 칩"을 "에이아이오분 칩"으로, "$3.50/kWh → $5.50/kWh"를 "삼점오달러에서 오점오달러"로, "60%"를 "60퍼센트"로 풀어 쓴 것 — 전부 금지. 원문 표기 그대로 쓸 것
+- 한자·중국어 글자는 한 글자도 쓰지 말 것(실제로 "이후釋放 예정"처럼 섞여 나온 적 있음). 원문이 중국어·일본어·영어면 한국어로 옮겨서 쓸 것
 
 [facts 작성 규칙 — note와 별개로 반드시 채울 것]
 - facts는 이 update에 속한 원문들에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부 옮겨 적은 목록. impact가 low여도 원문에 숫자가 있으면 채움
@@ -1019,6 +1023,106 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
   }
 }
 
+// ── 옛 기준으로 매긴 카드 다시 보기(2026-11-28 추가) ─────────────────────────────
+// 사용자: "지금 중요한 것에 왜 4개만 있냐, 미국 소비 둔화 같은 건 중요한 거 아니냐". 원인: 중요도 기준을 "숫자가 바뀌는 것"으로
+// 바꿨지만 그 전에 만들어진 카드는 옛 기준(그리고 설명·숫자 목록 없음) 그대로였음.
+// 그래서 오늘 카드 중 "중요도 이유(reason)"가 한 번도 안 붙은 카드(= 새 기준으로 본 적 없는 카드)를 한 번에 RESCORE_BATCH개씩
+// 원문과 함께 AI에게 다시 보여주고, 중요도·이유·설명·숫자 목록을 새로 받아 저장함. 한 번 본 카드는 reason이 붙어서 다시 안 봄
+// (AI가 빠뜨린 카드도 "다시 봄"으로 표시해서 같은 카드를 끝없이 다시 보지 않게 함). 다 보고 나면 이 단계는 할 일이 없어서 그냥 지나감.
+// 카드 순서가 흔들리지 않게 updated_at은 안 바꿈.
+const RESCORE_BATCH = 15;
+const RESCORE_SOURCE_CHARS = 700;  // 카드 하나당 보여줄 원문 길이(글 하나)
+const RESCORE_SOURCES = 2;         // 카드 하나당 보여줄 원문 수(최근 것부터)
+
+const RESCORE_TOOL = {
+  name: "rescore_cards",
+  description: "이미 정리된 카드들을 원문과 함께 다시 읽고, 카드마다 중요도·이유·설명·숫자 목록을 새로 매겨서 반환한다. 받은 카드 전부를 빠짐없이 반환할 것.",
+  input_schema: {
+    type: "object",
+    properties: {
+      cards: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            index: { type: "integer", description: "[카드] 목록의 번호" },
+            impact: { type: "string", enum: ["high", "medium", "low"] },
+            impact_reason: { type: "string", description: "왜 이 중요도인지 10자 안팎 한마디(예: \"전망치 변경\", \"판도 이벤트\", \"새 의견+숫자\", \"실적·추정치 변경\", \"가격·수급 변화\", \"새 의견(숫자 없음)\", \"개별 회사 소식\", \"반복\", \"잡담\", \"시황 중계\", \"홍보\")" },
+            note: { type: "string", description: "무슨 내용인지 1~3문장. 한글로 작성(한자 금지), 숫자는 아라비아 숫자, 영어 이름·단위는 원문 표기 그대로" },
+            facts: { type: "array", items: { type: "string" }, description: "원문에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부. 표기는 원문 그대로. 없으면 빈 배열" },
+          },
+          required: ["index", "impact", "impact_reason", "note", "facts"],
+        },
+      },
+    },
+    required: ["cards"],
+  },
+};
+
+async function rescoreOldClusters(sb, apiKey) {
+  const todayKey = kstDayKey(new Date());
+  const { data: rows, error } = await sb.from("clusters")
+    .select("id, headline, impact, targets, why, sources, updates, updated_at")
+    .eq("day_key", todayKey).order("updated_at", { ascending: false });
+  if (error) throw error;
+  const pending = (rows || []).filter(c => !(c.updates || []).some(u => u && u.reason)).slice(0, RESCORE_BATCH);
+  if (!pending.length) return 0;
+
+  // 카드마다 최근 원문 몇 개를 같이 보여줌(옛 "낮음" 카드는 설명이 아예 없어서 원문이 있어야 판단할 수 있음)
+  const pick = c => [...new Map((c.sources || []).filter(s => s && s.url).map(s => [s.url, s])).values()]
+    .sort((a, b) => (a.published_at < b.published_at ? 1 : -1)).slice(0, RESCORE_SOURCES);
+  const urls = [...new Set(pending.flatMap(c => pick(c).map(s => s.url)))];
+  const textByUrl = new Map();
+  if (urls.length) {
+    const { data: items, error: itErr } = await sb.from("items").select("url, title, summary").in("url", urls);
+    if (itErr) throw itErr;
+    for (const it of items || []) textByUrl.set(it.url, String(it.summary || it.title || "").replace(/\s+/g, " ").trim());
+  }
+  const cardLines = pending.map((c, i) => {
+    const srcs = pick(c).map(s => `   원문: ${(textByUrl.get(s.url) || s.title || "").slice(0, RESCORE_SOURCE_CHARS)}`).join("\n");
+    const old = String(c.why || "").replace(/\s+/g, " ").slice(0, 300);
+    return `${i + 1}. 제목: ${c.headline}${old ? `\n   기존 설명: ${old}` : ""}\n${srcs}`;
+  }).join("\n\n");
+
+  const prompt = `당신은 증권사 애널리스트를 돕는 리서치 어시스턴트입니다. 아래 [카드]는 텔레그램 글을 이미 묶어서 정리해 둔 것입니다.
+카드마다 원문을 다시 읽고 중요도(impact)·이유(impact_reason)·설명(note)·숫자 목록(facts)을 새로 매겨서 rescore_cards 도구로 반환하세요.
+카드 ${pending.length}개 전부를 빠짐없이 반환할 것.
+
+[impact 규칙]
+${IMPACT_RULES}
+
+[글쓰기 규칙]
+- note: 무슨 내용인지 1~3문장으로. 원문에 없는 내용을 지어내지 말 것
+- facts: 원문에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부, "무엇이 얼마"인지 알 수 있게 주어와 함께. 원문에 없는 숫자를 만들거나 계산하지 말 것. 숫자도 구체적 사실도 없으면 빈 배열
+- 한글로 작성하고 한자·중국어 글자는 한 글자도 쓰지 말 것(원문이 중국어면 한국어로 옮길 것). 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로("%"를 "퍼센트"로, "AI5"를 "에이아이오분"으로 풀어 쓰지 말 것)
+
+[카드]
+${cardLines}`;
+
+  const { args } = await callGemini(apiKey, RESCORE_TOOL, prompt, MAX_TOKENS);
+  const byIndex = new Map();
+  for (const r of (args && Array.isArray(args.cards)) ? args.cards : []) {
+    if (Number.isInteger(r.index) && r.index >= 1 && r.index <= pending.length && !byIndex.has(r.index)) byIndex.set(r.index, r);
+  }
+  const runAtIso = new Date().toISOString();
+  let changed = 0;
+  for (let i = 0; i < pending.length; i++) {
+    const c = pending[i];
+    const r = byIndex.get(i + 1);
+    const impact = r && ["high", "medium", "low"].includes(r.impact) ? r.impact : (c.impact || "low");
+    const note = r && typeof r.note === "string" ? r.note.trim() : "";
+    const facts = r ? cleanFacts(r.facts) : [];
+    const reason = r && typeof r.impact_reason === "string" && r.impact_reason.trim()
+      ? r.impact_reason.replace(/\s+/g, " ").trim().slice(0, 30) : "다시 봄";
+    const updates = [...(c.updates || []), { at: c.updated_at, note, ...(facts.length ? { facts } : {}), reason, run_at: runAtIso, rescored: true }];
+    const { error: upErr } = await sb.from("clusters").update({ impact, why: note || c.why, updates }).eq("id", c.id);
+    if (upErr) throw upErr;
+    if (impact !== c.impact) changed++;
+  }
+  console.log(`옛 카드 ${pending.length}개 다시 봄(중요도 바뀜 ${changed}개)`);
+  return pending.length;
+}
+
 // ── 자동 요약 잠금(2026-11-26 추가) ─────────────────────────────
 // 요약이 5분마다 자동으로 돌고(api/tick.js) 사람도 "지금 업데이트"를 누를 수 있어서, 둘이 겹치면 같은 글을
 // 동시에 처리해 카드가 중복될 수 있음. status 테이블 id 3 줄을 잠금 겸 "마지막 자동 요약 결과" 기록으로 씀:
@@ -1067,16 +1171,21 @@ export default async function handler(req, res) {
   }
 
   // summarizeCore의 응답을 가로채서 잠금 해제 메모로 남김(화면 상단 "자동 요약" 표시에 쓰임)
-  let code = 200, body = {};
+  let code = 200, body = {}, rescored = 0;
   const capture = { status(c) { code = c; return capture; }, json(j) { body = j; } };
   try {
     modelCandidates = null; modelDb = sb; lastModelUsed = "";
     await summarizeCore(req, capture, sb, GEMINI_API_KEY);
+    // 새 글 정리가 밀려 있지 않을 때만 옛 카드를 한 묶음 다시 봄. 여기서 실패해도 새 글 정리 결과에는 영향 없게 따로 감쌈
+    if (code === 200 && !body.has_more_backlog) {
+      try { rescored = await rescoreOldClusters(sb, GEMINI_API_KEY); }
+      catch (err) { console.error("옛 카드 다시 보기 실패(무시):", err.message); }
+    }
   } catch (err) {
     code = 500; body = { error: String(err.message || err) };
   }
   const note = code !== 200 ? `오류: ${body.error || code}`
-    : body.skipped ? "새 글 없음"
+    : body.skipped ? (rescored ? `새 글 없음 · 옛 카드 ${rescored}개 다시 봄` : "새 글 없음")
     : `${body.item_count}건 정리(새 카드 ${body.new_clusters}개, 갱신 ${body.updated_clusters}개)` + (body.has_more_backlog ? " · 밀린 것 남음" : "") + (lastModelUsed ? ` · ${lastModelUsed}` : "");
   await releaseLock(sb, note);
   res.status(code).json(body);

@@ -17,6 +17,8 @@ let geminiCalls = 0;
 function geminiOk(args) {
   return { ok: true, json: async () => ({ candidates: [{ finishReason: "STOP", content: { parts: [{ functionCall: { name: args.__name, args } }] } }] }) };
 }
+let rescoreAnswer = [];  // "옛 카드 다시 보기"에 가짜 AI가 답할 내용
+let rescorePrompts = [];
 let modelList = [];   // 가짜 모델 목록(비어 있으면 기본 모델만 씀)
 let modelsTried = [];  // 요약 호출에 쓰인 모델 이름들
 let missingModels = new Set(); // 이 모델은 404로 답함
@@ -31,6 +33,11 @@ globalThis.fetch = async (url, opt) => {
   const name = body.tools[0].functionDeclarations[0].name;
   const prompt = body.contents[0].parts[0].text;
   if (name === "split_telegram_digests") return geminiOk({ __name: name, splits: [] });
+  if (name === "rescore_cards") { // 옛 카드 다시 보기 — 새 글 요약 호출 수(geminiCalls)에는 안 셈
+    geminiCalls--;
+    rescorePrompts.push(prompt);
+    return geminiOk({ __name: name, cards: rescoreAnswer });
+  }
   const step = script.shift();
   if (step === "max_tokens") return { ok: true, json: async () => ({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [] } }] }) };
   if (step === 429) return { ok: false, status: 429, text: async () => "rate limited" };
@@ -61,7 +68,7 @@ async function press(continuation) {
 }
 const clusterUrls = () => db.DB.clusters.flatMap(c => c.sources.map(s => s.url));
 
-beforeEach(() => { db = makeDb(); script = []; geminiCalls = 0; modelList = []; modelsTried = []; missingModels = new Set(); });
+beforeEach(() => { db = makeDb(); script = []; geminiCalls = 0; rescoreAnswer = []; rescorePrompts = []; modelList = []; modelsTried = []; missingModels = new Set(); });
 
 test("같은 시각에 몰려 들어온 100건을 빠짐없이 한 번씩만 처리하고, 키워드 뉴스는 건드리지 않음", async () => {
   const at = microIso(NOW - 1800e3);
@@ -157,13 +164,13 @@ function answerWith(makeUpdates) {
 
 test("AI가 준 숫자·사실 목록을 카드에 저장하고, 같은 카드에 글이 더 붙으면 이력으로 쌓임", async () => {
   db.DB.items.push(tgItem(1, microIso(NOW - 120e3)));
-  answerWith(() => [{ indices: [1], existing_cluster_ref: 0, headline: "메이투안 3분기 실적", impact: "high", targets: ["메이투안"],
+  answerWith(() => [{ indices: [1], existing_cluster_ref: 0, headline: "메이투안 3분기 실적", impact: "high", impact_reason: "실적·추정치 변경", targets: ["메이투안"],
     note: "[BEAT]\n매출 예상 상회", facts: ["• 매출 1,155.6억위안(+21.6% YoY)", "매출 1,155.6억위안(+21.6% YoY)", "조정 순이익 18.5억위안 vs. 예상 22억위안", 42] }]);
   await press(false);
   assert.deepEqual(db.DB.clusters[0].updates[0].facts, ["매출 1,155.6억위안(+21.6% YoY)", "조정 순이익 18.5억위안 vs. 예상 22억위안"], "앞 기호·겹치는 줄·글자가 아닌 값은 정리됨");
 
   db.DB.items.push(tgItem(2, microIso(NOW - 60e3)));
-  answerWith(() => [{ indices: [1], existing_cluster_ref: 1, headline: "", impact: "medium", targets: ["메이투안"], note: "", facts: ["핵심 로컬 커머스 영업이익률 7.3%"] }]);
+  answerWith(() => [{ indices: [1], existing_cluster_ref: 1, headline: "", impact: "medium", impact_reason: "실적·추정치 변경", targets: ["메이투안"], note: "", facts: ["핵심 로컬 커머스 영업이익률 7.3%"] }]);
   await press(true);
   assert.equal(db.DB.clusters.length, 1);
   assert.equal(db.DB.clusters[0].sources.length, 2);
@@ -233,4 +240,27 @@ test("고른 모델을 무료로 못 쓰면(404) 다음 모델로 넘어가서 �
   assert.equal(r.code, 200);
   assert.equal(clusterUrls().length, 1);
   assert.equal(modelsTried.at(-1), "gemini-7.0-flash-lite");
+});
+
+// ── 2026-11-28 추가: 옛 기준으로 매긴 오늘 카드를 새 기준으로 다시 봄 ──
+test("이유가 안 붙은 오늘 카드는 원문과 함께 다시 보고 중요도·설명·숫자 목록을 새로 저장, 한 번 본 카드는 다시 안 봄", async () => {
+  const today = new Date(NOW + 9 * 3600e3).toISOString().slice(0, 10);
+  const at = new Date(NOW - 3600e3).toISOString();
+  db.DB.items.push(tgItem(1, microIso(NOW - 3 * 3600e3), { summary: "블랙프라이데이 매출 전년 대비 -4.2%, 소비심리지수 51.0" }));
+  db.DB.clusters.push({ id: 700, day_key: today, headline: "미국 블랙프라이데이 소비 부진", impact: "low", targets: ["미국 소비"], why: "",
+    sources: [{ url: "https://t.me/ch/0001", source: "텔레그램: ch", published_at: at }], updates: [{ at, note: "새로 감지됨" }], updated_at: at });
+  db.DB.briefings.push({ id: 0, created_at: new Date(NOW - 60e3).toISOString(), period_to: microIso(NOW - 60e3) }); // 새 글 없음
+  rescoreAnswer = [{ index: 1, impact: "high", impact_reason: "전망치 변경", note: "소비 둔화가 숫자로 확인됨", facts: ["블랙프라이데이 매출 전년 대비 -4.2%"] }];
+  const r = await press(false);
+  assert.equal(r.code, 200);
+  assert.match(rescorePrompts[0], /소비심리지수 51\.0/, "원문을 같이 보여줌");
+  const c = db.DB.clusters.find(x => x.id === 700);
+  assert.equal(c.impact, "high");
+  assert.equal(c.why, "소비 둔화가 숫자로 확인됨");
+  assert.deepEqual(c.updates.at(-1).facts, ["블랙프라이데이 매출 전년 대비 -4.2%"]);
+  assert.equal(c.updates.at(-1).reason, "전망치 변경");
+  assert.equal(c.updated_at, at, "카드 순서가 안 흔들리게 시각은 그대로");
+  assert.match(db.DB.status.find(s => s.id === 3).last_note, /옛 카드 1개 다시 봄/);
+  await press(true);
+  assert.equal(rescorePrompts.length, 1, "한 번 본 카드는 다시 안 봄");
 });
