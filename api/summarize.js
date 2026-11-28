@@ -316,7 +316,7 @@ function distinctDayKeys(items) {
 // 문체 규칙(2026-11-28 사용자: "옵시디언에 요청한 것처럼 말투·가독성을 올려 달라") — 리서치 볼트 CLAUDE.md의 문체 규칙을 옮김.
 // 새 글 정리와 옛 카드 다시 보기가 같이 씀. 이 규칙으로 쓴 설명에는 updates[].style = STYLE_VERSION을 붙여서,
 // 옛 말투("~했습니다")로 쓰인 오늘 카드를 rescoreOldClusters가 찾아 다시 쓰게 함. 규칙을 바꾸면 STYLE_VERSION을 올릴 것.
-const STYLE_VERSION = 4; // 4: 다시 볼 때 카드 제목과 가장 닮은 원문을 고르게 고친 뒤 한 번 더 // 3 (2026-11-28): 모음 글에서 나온 카드를 다시 볼 때 글 전체를 읽혀서 제목과 내용이 어긋났던 것을 고친 뒤 다시 쓰게 올림
+const STYLE_VERSION = 5; // 5: 앞선 다시 보기가 제목까지 엉뚱하게 바꿔 놓은 카드를 원문 제목으로 되돌린 뒤 한 번 더 // 4: 다시 볼 때 카드 제목과 가장 닮은 원문을 고르게 고친 뒤 한 번 더 // 3 (2026-11-28): 모음 글에서 나온 카드를 다시 볼 때 글 전체를 읽혀서 제목과 내용이 어긋났던 것을 고친 뒤 다시 쓰게 올림
 const STYLE_RULES = `- 말투는 개조식: 줄 끝을 "~함", "~임", "~됨", "~전망", "~예정", "~상향"처럼 끊을 것. "~했습니다", "~했다", "~입니다", "~이다" 금지
 - note의 첫 줄은 결론 한 줄(무슨 일이고 방향이 어느 쪽인지). 그다음 줄부터는 그 근거(숫자·사실)를 한 줄에 하나씩. 줄은 줄바꿈으로 나누고 전체 2~5줄(low는 결론 한 줄만)
 - 한 줄에 생각 하나, 숫자는 두 개까지. 줄끼리는 원인 → 결과 → 의미 순서로 놓고 필요하면 "그래서", "반면", "다만"으로 이을 것
@@ -1195,6 +1195,16 @@ async function rescoreOldClusters(sb, apiKey) {
     if (itErr) throw itErr;
     for (const it of items || []) textByUrl.set(it.url, { title: String(it.title || ""), text: String(it.summary || it.title || "").replace(/\s+/g, " ").trim() });
   }
+  // 제목이 원문과 동떨어진 카드 바로잡기(2026-11-28): 앞선 다시 보기가 엉뚱한 글을 읽고 제목까지 바꿔 버린 카드가 있었음.
+  // 카드에 붙은 어떤 원문 제목과도 안 닮았으면(닮음 0.2 미만) 가장 최근 원문의 제목으로 되돌리고 그걸 기준으로 다시 봄.
+  for (const c of pending) {
+    const srcs = (c.sources || []).filter(s => s && s.title);
+    if (!srcs.length) continue;
+    const best = Math.max(...srcs.map(s => headlineSimilarity(c.headline, s.title)));
+    if (best >= 0.2) continue;
+    const latest = srcs.slice().sort((a, b) => (a.published_at < b.published_at ? 1 : -1))[0];
+    c.headline = String(latest.title).replace(/…$/, "").trim() || c.headline;
+  }
   const cardLines = pending.map((c, i) => {
     const srcs = pick(c).map(s => `   원문: ${sourceTextFor(s, textByUrl.get(s.url)).slice(0, RESCORE_SOURCE_CHARS)}`).join("\n");
     // 기존 설명은 처음 정리할 때 쓴 것(다시 보기로 덮어쓴 것 말고) — 다시 보기가 틀렸더라도 그 틀린 내용을 물려받지 않게
@@ -1243,7 +1253,9 @@ ${cardLines}`;
     const score = cleanScore(r && r.importance_score, impact, hadFacts ? 1 : 0);
     const updates = [...(c.updates || []), { at: c.updated_at, note, ...(facts.length ? { facts } : {}), reason, score, style: STYLE_VERSION, run_at: runAtIso, rescored: true }];
     const newHead = r && typeof r.headline === "string" ? r.headline.replace(/\s+/g, " ").trim() : "";
-    const headline = newHead.length >= 4 && newHead.length <= 120 && !isJunkBucket(newHead) ? newHead : c.headline;
+    // 새 제목은 지금 제목과 닮았을 때만 받음(표기·말투만 고친 것). 주제가 바뀐 제목은 버림
+    const headline = newHead.length >= 4 && newHead.length <= 120 && !isJunkBucket(newHead)
+      && headlineSimilarity(newHead, c.headline) >= 0.3 ? newHead : c.headline;
     const { error: upErr } = await sb.from("clusters").update({ impact, headline, why: note || c.why, updates }).eq("id", c.id);
     if (upErr) throw upErr;
     if (impact !== c.impact) changed++;
