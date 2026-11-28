@@ -153,6 +153,59 @@
   .kw-row{display:flex;gap:6px;margin-bottom:8px;}
   .kw-row input{flex:1;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:inherit;}
   .kw-row button{font-size:12px;padding:6px 12px;border:none;border-radius:6px;background:var(--info);color:#fff;cursor:pointer;font-family:inherit;}
+
+  /* ── 2026-11-28 화면 다시 짬: 넓은 화면에 카드를 격자로 여러 개씩, 카드마다 숫자 목록, 원문은 옆 패널 ── */
+  .wrap{max-width:1760px;}
+  .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 2px;}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;}
+  .seg button{font-family:inherit;font-size:11.5px;padding:5px 10px;border:none;background:var(--block);color:var(--sub);cursor:pointer;}
+  .seg button+button{border-left:1px solid var(--border);}
+  .seg button.on{background:var(--info);color:#fff;font-weight:600;}
+  .toolbar input,.toolbar select{font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--block);color:var(--text);}
+  .toolbar input{flex:1;min-width:160px;max-width:320px;}
+  .toolbar select{max-width:200px;}
+  .tool-count{font-size:11px;color:var(--sub);margin-left:auto;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:8px;align-items:start;}
+  .grid>.sig-group{margin-bottom:0;max-height:460px;overflow-y:auto;scrollbar-width:thin;}
+  .grid>.empty{grid-column:1/-1;}
+  .sig-group.low-only{background:transparent;border:1px solid var(--border);}
+  .sig-group-title{overflow-wrap:anywhere;}
+  .sig-why{white-space:pre-line;overflow-wrap:anywhere;}
+  .sig-why.old-note{border-top:1px dashed var(--border);padding-top:4px;}
+  .sig-subitem-title{overflow-wrap:anywhere;}
+  .facts{margin:5px 0 0;padding:0;list-style:none;}
+  .facts li{font-size:11.5px;line-height:1.5;padding:1px 0 1px 8px;border-left:2px solid var(--border);margin-bottom:3px;overflow-wrap:anywhere;}
+  .num{font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;}
+  .excerpt{font-size:11px;color:var(--sub);margin-top:4px;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;}
+  .link-btn{font-family:inherit;font-size:10.5px;color:var(--info);background:none;border:none;padding:0;cursor:pointer;margin-top:5px;text-align:left;}
+  .link-btn:hover{text-decoration:underline;}
+  .hot-rows{columns:2 420px;column-gap:18px;}
+  .hot-row{break-inside:avoid;}
+  .hot-row:first-child{border-top:none;}
+  .hot-row .link-btn{font-size:12.5px;color:inherit;margin:0;}
+  .post{background:var(--block);border:1px solid var(--border);border-radius:8px;padding:8px 10px;cursor:pointer;}
+  .post-top{display:flex;gap:6px;align-items:center;font-size:10.5px;color:var(--sub);margin-bottom:3px;}
+  .post-ch{font-weight:700;color:var(--text);}
+  .post-top a{margin-left:auto;color:var(--info);text-decoration:none;white-space:nowrap;}
+  .post-text{font-size:12px;line-height:1.55;white-space:pre-line;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:9;-webkit-box-orient:vertical;overflow:hidden;}
+  .post.open .post-text{display:block;}
+  .post .link-btn{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .drawer-back{position:fixed;inset:0;background:#0006;z-index:20;display:none;}
+  .drawer-back.on{display:block;}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(620px,100vw);background:var(--bg);border-left:1px solid var(--border);z-index:21;overflow-y:auto;padding:14px 16px 40px;transform:translateX(100%);transition:transform .15s;}
+  .drawer.on{transform:none;}
+  .drawer-close{float:right;font-family:inherit;font-size:12px;border:1px solid var(--border);background:var(--block);color:var(--text);border-radius:6px;padding:4px 10px;cursor:pointer;}
+  .drawer h2{font-size:15px;margin:0 0 6px;line-height:1.4;overflow-wrap:anywhere;}
+  .drawer h3{font-size:11px;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;margin:16px 0 6px;}
+  .drawer .post{cursor:default;margin-bottom:6px;}
+  .drawer .post-text{display:block;}
+  .cov-table{width:100%;border-collapse:collapse;font-size:11.5px;}
+  .cov-table th{text-align:left;color:var(--sub);font-weight:600;padding:4px 8px;border-bottom:1px solid var(--border);white-space:nowrap;}
+  .cov-table td{padding:4px 8px;border-bottom:1px solid var(--border);}
+  .cov-table td.n{text-align:right;font-variant-numeric:tabular-nums;}
+  .cov-table th.n{text-align:right;}
+  .cov-note{font-size:11px;color:var(--sub);margin-top:8px;line-height:1.6;}
+  .cov-wrap{overflow-x:auto;}
 </style>
 </head>
 <body>
@@ -175,6 +228,21 @@
         <button class="tab-btn" data-tab="keyword">추적 키워드</button>
       </div>
 
+      <div class="toolbar" id="tg-toolbar">
+        <span class="seg" id="view-seg">
+          <button data-view="cards" title="AI가 회사·주제별로 묶어서 정리한 카드">정리 카드</button>
+          <button data-view="raw" title="수집된 텔레그램 글을 하나도 빼지 않고 그대로">원문 전체</button>
+        </span>
+        <span class="seg" id="impact-seg">
+          <button data-impact="all">전체</button>
+          <button data-impact="medium">중간 이상</button>
+          <button data-impact="high">높음만</button>
+        </span>
+        <select id="ch-select" title="채널 하나만 보기"></select>
+        <input id="tg-search" placeholder="회사·단어 검색…" />
+        <span class="tool-count" id="tool-count"></span>
+      </div>
+
       <div class="day-group">
         <div class="day-title" id="today-title">오늘</div>
         <div id="brief-today"><div class="empty">불러오는 중…</div></div>
@@ -184,6 +252,11 @@
         <div id="brief-yesterday"><div class="empty">기록 없음</div></div>
       </details>
     </div>
+
+    <details class="collapse-box" id="cov-box">
+      <summary id="cov-summary">텔레그램 수집 현황</summary>
+      <div class="collapse-body" id="cov-body"><div class="empty">불러오는 중…</div></div>
+    </details>
 
     <details class="collapse-box">
       <summary>추적 키워드 관리</summary>
@@ -206,16 +279,10 @@
         <div class="chips" id="tg-list"></div>
       </div>
     </details>
-
-    <details class="collapse-box">
-      <summary>전체 피드</summary>
-      <div class="collapse-body">
-        <input id="search-input" placeholder="제목·요약 검색…" />
-        <div class="cats" id="cat-pills"></div>
-        <div id="feed"><div class="empty">데이터 로딩 중…</div></div>
-      </div>
-    </details>
   </div>
+
+  <div class="drawer-back" id="drawer-back"></div>
+  <aside class="drawer" id="drawer"></aside>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -226,27 +293,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const CATS = [
-  ["all","전체","--sub"],
-  ["packaging","패키징","--cat-packaging"],
-  ["hbm","HBM","--cat-hbm"],
-  ["cpo","CPO/광","--cat-cpo"],
-  ["power","전력반도체","--cat-power"],
-  ["ai_server","AI서버","--cat-ai_server"],
-  ["korea","한국주식","--cat-korea"],
-  ["biotech","바이오","--cat-biotech"],
-  ["disclosure","공시","--cat-disclosure"],
-  ["telegram","텔레그램","--cat-telegram"],
-  ["other","기타","--cat-other"],
-];
-
-let allItems = [];
-let activeCat = "all";
-let searchTerm = "";
-
 function extractHandle(v){
-  v = v.trim().replace(/^https?:\/\/t\.me\//i,"").replace(/^@/,"").replace(/^s\//,"");
-  return v.split(/[/?]/)[0];
+  // "https://t.me/handle", "t.me/s/handle", "@handle", "handle" 전부 받음. 채널 이름이 아니면(점이 들어가는 등) 빈 값
+  // (2026-11-28: 예전엔 "t.me/handle"처럼 https 없이 넣으면 "t.me"라는 가짜 채널이 등록됐음)
+  v = v.trim().replace(/^(https?:\/\/)?(www\.)?(t|telegram)\.me\//i,"").replace(/^@/,"").replace(/^s\//,"");
+  v = v.split(/[/?#]/)[0];
+  return /^[A-Za-z0-9_]{4,}$/.test(v) ? v : "";
 }
 
 function timeAgo(iso){
@@ -288,22 +340,16 @@ function monthDayLabel(dayKey){
   return `${m}월 ${d}일`;
 }
 
-function dayLabel(iso){
-  const d = new Date(iso), now = new Date();
-  const sameDay = (a,b)=>a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate();
-  const yest = new Date(now); yest.setDate(now.getDate()-1);
-  if (sameDay(d, now)) return "오늘";
-  if (sameDay(d, yest)) return "어제";
-  return d.toLocaleDateString("ko-KR",{month:"long",day:"numeric"});
-}
-
 async function loadKeywords(){
   const {data} = await sb.from("keywords").select("term").order("term");
   renderChips("kw-list", (data||[]).map(r=>r.term), removeKeyword);
 }
 async function loadChannels(){
   const {data} = await sb.from("telegram_channels").select("handle").order("handle");
-  renderChips("tg-list", (data||[]).map(r=>r.handle), removeChannel);
+  channelHandles = (data||[]).map(r=>r.handle);
+  renderChips("tg-list", channelHandles, removeChannel);
+  renderChannelSelect();
+  renderCoverage();
 }
 function renderChips(elId, list, onRemove){
   const el = document.getElementById(elId);
@@ -311,7 +357,7 @@ function renderChips(elId, list, onRemove){
   list.forEach(v=>{
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.innerHTML = `<span>${v}</span>`;
+    chip.innerHTML = `<span>${esc(v)}</span>`;
     const btn = document.createElement("button");
     btn.textContent = "✕";
     btn.onclick = ()=>onRemove(v);
@@ -344,179 +390,185 @@ async function removeChannel(handle){
   loadChannels();
 }
 
-// ── 브리핑(클러스터) ──────────────────────────────────────
-// "브리핑 생성"을 여러 번 눌러도 같은 주제는 새 카드로 또 쌓이지 않고, 기존 카드가
-// 갱신되면서 그 안에 시간별 업데이트 이력이 쌓이는 구조. 카드 하나 = 클러스터 하나.
+// ── 텔레그램 탭(2026-11-28 다시 짬) ─────────────────────────────────
+// 바꾼 이유(사용자 요청): (1) 카드가 한 줄에 하나씩이라 한 화면에 몇 개 안 보였음 → 넓은 화면에 격자로 여러 개씩
+// (2) 요약이 너무 줄어서 숫자가 다 빠졌음 → 카드마다 "숫자·사실 목록"(summarize.js의 facts)을 그대로 보여주고,
+//     옛 카드처럼 목록이 없으면 지금까지 쌓인 설명을 전부 보여줌(예전엔 마지막 설명 하나만 보였음)
+// (3) 텔레그램 글을 정말 다 보는지 알 수 없었음 → "원문 전체" 보기(수집된 글을 하나도 안 빼고) + "수집 현황" 표
+// 보기 두 가지: 정리 카드(회사/주제별 카드) / 원문 전체(글 하나하나). 카드에서 "원문 보기"를 누르면 옆 패널에 원문이 뜸.
 const IMPACT_LABEL = {high:"높음", medium:"중간", low:"낮음"};
 const IMPACT_VAR = {high:"--miss", medium:"--note", low:"--sub"};
+const IMPACT_ORDER = {high:0, medium:1, low:2};
+const TG_PREFIX = "텔레그램: ";
 
-// note/why 텍스트 맨 앞의 "[BEAT]"/"[MISS]"/"[혼조]"/"[IN-LINE]" 마커를 색깔 뱃지로 바꾸고,
-// 줄바꿈(\n)을 <br>로 바꿔줌 — 리포트 요약(2026-09-22 추가)이 여러 줄로 오는 걸 그대로 보여주기 위함
-const VERDICT_LABEL = {BEAT:"BEAT", MISS:"MISS", "혼조":"혼조", "IN-LINE":"IN-LINE"};
+// 옛 글은 &amp; &#036; 같은 표기가 그대로 저장돼 있음(2026-11-28부터는 수집할 때 풀어서 저장) — 화면에서 원래 글자로 되돌림
+const ENT = {amp:"&", lt:"<", gt:">", quot:'"', apos:"'", nbsp:" "};
+function decodeEnt(s){
+  return String(s ?? "").replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e)=>{
+    if (e[0] === "#"){
+      const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+    }
+    return ENT[e.toLowerCase()] ?? m;
+  });
+}
+// 금액·비율처럼 "값"인 숫자만 굵게(연도·날짜는 그대로 둠). 글자는 전부 안전하게 바꿔서 넣음.
+const NUM_RE = /[+\-−±]?[$₩€¥]\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:bn|mn|tn|조|억|만))?|[+\-−±]?\d[\d,]*(?:\.\d+)?\s?(?:%p|%|bp|조|억|만|원|달러|위안|엔|유로|배|GW|MW|kWh|kW|nm|나노|톤|bn|mn)(?:\s?\d[\d,]*\s?(?:억|만|천))*(?:\s?(?:원|달러|위안|엔|유로))?/g;
+function hl(raw){
+  const s = decodeEnt(raw);
+  let out = "", last = 0;
+  for (const m of s.matchAll(NUM_RE)){
+    out += esc(s.slice(last, m.index)) + `<b class="num">${esc(m[0])}</b>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(s.slice(last));
+}
+
+// 설명 맨 앞의 "[BEAT]"/"[MISS]"/"[혼조]"/"[IN-LINE]" 표시는 색깔 글자로(줄바꿈은 CSS white-space:pre-line이 처리)
 const VERDICT_VAR = {BEAT:"--beat", MISS:"--miss", "혼조":"--note", "IN-LINE":"--sub"};
-function formatWhy(text){
-  if (!text) return "";
-  let body = text;
-  let verdictHtml = "";
+function noteHtml(text){
+  let body = String(text || "");
+  let verdict = "";
   const m = body.match(/^\[(BEAT|MISS|혼조|IN-LINE)\]\s*/);
   if (m){
-    const tag = m[1];
-    verdictHtml = `<span class="sig-verdict" style="color:var(${VERDICT_VAR[tag]||"--sub"})">${VERDICT_LABEL[tag]||tag}</span><br>`;
+    verdict = `<span class="sig-verdict" style="color:var(${VERDICT_VAR[m[1]]||"--sub"})">${m[1]}</span> `;
     body = body.slice(m[0].length);
   }
-  return verdictHtml + body.replace(/\n/g, "<br>");
+  return verdict + hl(body);
 }
 
-function renderClusterCard(c, compact){
-  const targetsHtml = (c.targets||[]).map(t=>`<span class="sig-target">${t}</span>`).join("");
-  const sources = Array.isArray(c.sources) ? c.sources : [];
-  const updates = Array.isArray(c.updates) ? c.updates : [];
+// 화면 상태(브라우저에 기억)
+function pref(key, fallback){ try { return localStorage.getItem(key) || fallback; } catch { return fallback; } }
+function setPref(key, v){ try { localStorage.setItem(key, v); } catch {} }
+let tgView = pref("radar_view", "cards") === "raw" ? "raw" : "cards";
+let impactFilter = ["all","medium","high"].includes(pref("radar_impact", "all")) ? pref("radar_impact", "all") : "all";
+let channelFilter = "";  // 채널 하나만 보기("" = 전체)
+let tgQuery = "";
+const openPosts = new Set(); // "원문 전체"에서 펼쳐 둔 글(화면이 다시 그려져도 유지)
 
-  const sourcesHtml = sources.length
-    ? `<details class="sig-sources">
-        <summary>출처 ${sources.length}건 보기</summary>
-        <div class="sig-source-list">
-          ${sources.map(s=>`<div class="sig-source-item"><a href="${s.url}" target="_blank" rel="noopener">${s.title}</a><br><span class="sig-source-meta">${s.source||""} · ${timeAgo(s.published_at)}</span></div>`).join("")}
-        </div>
-      </details>`
-    : "";
+// 텔레그램 원문(어제 0시부터) — "원문 전체" 보기, 카드의 원문 미리보기, 수집 현황에 씀
+let tgItems = [];
+const tgByUrl = new Map();
+let allClusters = [];
+const clusterByUrl = new Map();
+let channelHandles = [];
 
-  const timelineHtml = updates.length > 1
-    ? `<details class="sig-timeline">
-        <summary>업데이트 이력 ${updates.length}건</summary>
-        <div class="sig-timeline-list">
-          ${updates.slice().reverse().map(u=>`<div class="sig-timeline-item"><span class="sig-timeline-time">${kstTimeLabel(u.at)}</span>${formatWhy(u.note) || "새로 감지됨"}</div>`).join("")}
-        </div>
-      </details>`
-    : "";
-
-  return `
-    <div class="sig-row${compact ? " sig-row-compact" : ""}">
-      <div class="sig-top">
-        <span class="sig-badge" style="background:var(${IMPACT_VAR[c.impact]||"--sub"})">${IMPACT_LABEL[c.impact]||"낮음"}</span>
-        ${targetsHtml}
-        <span class="sig-src">마지막 업데이트 ${kstTimeLabel(c.updated_at)}</span>
-      </div>
-      <div class="sig-title">${c.headline}</div>
-      ${c.why ? `<div class="sig-why">${formatWhy(c.why)}</div>` : ""}
-      ${timelineHtml}
-      ${sourcesHtml}
-    </div>`;
-}
-
-// 회사/섹터 그룹 안에 들어가는 사건 하나 — renderClusterCard와 거의 같지만, 그룹 카드 상단에
-// 이미 대표 회사/섹터명(groupKey)이 나와 있으므로 그건 targets 칩에서 빼고 나머지만 보여줌
-function renderSubItem(c, groupKey){
-  const otherTargets = (c.targets||[]).filter(t=>t!==groupKey);
-  const targetsHtml = otherTargets.map(t=>`<span class="sig-target">${t}</span>`).join("");
-  const sources = Array.isArray(c.sources) ? c.sources : [];
-  const updates = Array.isArray(c.updates) ? c.updates : [];
-
-  const sourcesHtml = sources.length
-    ? `<details class="sig-sources">
-        <summary>출처 ${sources.length}건 보기</summary>
-        <div class="sig-source-list">
-          ${sources.map(s=>`<div class="sig-source-item"><a href="${s.url}" target="_blank" rel="noopener">${s.title}</a><br><span class="sig-source-meta">${s.source||""} · ${timeAgo(s.published_at)}</span></div>`).join("")}
-        </div>
-      </details>`
-    : "";
-
-  const timelineHtml = updates.length > 1
-    ? `<details class="sig-timeline">
-        <summary>업데이트 이력 ${updates.length}건</summary>
-        <div class="sig-timeline-list">
-          ${updates.slice().reverse().map(u=>`<div class="sig-timeline-item"><span class="sig-timeline-time">${kstTimeLabel(u.at)}</span>${formatWhy(u.note) || "새로 감지됨"}</div>`).join("")}
-        </div>
-      </details>`
-    : "";
-
-  return `
-    <div class="sig-subitem">
-      <div class="sig-subitem-top">
-        <span class="sig-badge sig-badge-sm" style="background:var(${IMPACT_VAR[c.impact]||"--sub"})">${IMPACT_LABEL[c.impact]||"낮음"}</span>
-        ${targetsHtml}
-        <span class="sig-src">${kstTimeLabel(c.updated_at)}</span>
-      </div>
-      <div class="sig-subitem-title">${c.headline}</div>
-      ${c.why ? `<div class="sig-why">${formatWhy(c.why)}</div>` : ""}
-      ${timelineHtml}
-      ${sourcesHtml}
-    </div>`;
-}
-
-// 회사/섹터 카드(2026-09-22 추가) — group.items는 이미 impact 우선순위로 정렬돼 들어옴
-function renderGroupCard(group){
-  const items = group.items;
-  const bestImpact = items[0].impact;
-  const latestIso = items.reduce((m,c)=> new Date(c.updated_at) > new Date(m) ? c.updated_at : m, items[0].updated_at);
-  const subHtml = items.map(c=>renderSubItem(c, group.key)).join("");
-  return `
-    <div class="sig-group">
-      <div class="sig-group-top">
-        <span class="sig-badge" style="background:var(${IMPACT_VAR[bestImpact]||"--sub"})">${IMPACT_LABEL[bestImpact]||"낮음"}</span>
-        <span class="sig-group-title">${newBadge(latestIso)}${group.key}</span>
-        <span class="sig-group-count">${items.length}건</span>
-        <span class="sig-src">최근 ${kstTimeLabel(latestIso)}</span>
-      </div>
-      <div class="sig-group-items">${subHtml}</div>
-    </div>`;
-}
-
-// 회사/섹터 기준 카드 그룹핑(2026-09-22 추가): targets[0](대표 회사/섹터명, api/summarize.js가
-// 이 순서를 보장함) 기준으로 클러스터를 묶어서 카드 하나 + 그 아래 사건별 서브 항목으로 보여줌.
-// medium/high가 하나도 없는(전부 low인) 그룹은 카드로 따로 안 만들고, 기존처럼 "낮은 중요도"
-// 묶음에 개별 항목으로 남김 — 사소한 내용까지 회사 카드로 다 만들면 카드 수가 오히려 안 줄어들기 때문.
-function renderClusterList(elId, clusters, emptyMsg){
-  document.getElementById(elId).innerHTML = clusterListHtml(clusters, emptyMsg);
-}
-function clusterListHtml(clusters, emptyMsg){
-  if (!clusters.length) return `<div class="empty">${emptyMsg}</div>`;
-
-  const order = {high:0, medium:1, low:2};
-  const byImpactThenRecency = (a,b)=>{
-    const bi = (order[a.impact]??3)-(order[b.impact]??3);
-    if (bi !== 0) return bi;
-    return new Date(b.updated_at) - new Date(a.updated_at);
-  };
-  // 카드(그룹) 하나가 가장 최근에 받은 업데이트 시각 — 그룹 내부 아이템 중 최댓값(2026-09-23 추가)
-  const groupLatestUpdatedAt = (items) => items.reduce(
-    (max, c) => { const t = new Date(c.updated_at).getTime(); return t > max ? t : max; }, 0
-  );
-
-  const groupsMap = new Map();
-  for (const c of clusters){
-    const key = (c.targets && c.targets[0]) ? c.targets[0] : "기타";
-    if (!groupsMap.has(key)) groupsMap.set(key, []);
-    groupsMap.get(key).push(c);
+// 카드 하나(=사건 하나)를 화면에 그리기 좋게 정리: 숫자·사실 목록(최근 것부터, 겹치는 줄 뺌), 설명 이력, 원문 목록
+function clusterView(c){
+  const stamp = `${c.updated_at}|${(c.updates||[]).length}|${(c.sources||[]).length}`;
+  if (c._v && c._v.stamp === stamp) return c._v;
+  const ups = (Array.isArray(c.updates) ? c.updates : []).slice().sort((a,b)=> new Date(b.at) - new Date(a.at));
+  const facts = [], seenF = new Set();
+  const notes = [], seenN = new Set();
+  for (const u of ups){
+    for (const f of (Array.isArray(u.facts) ? u.facts : [])){
+      const k = String(f).replace(/\s/g, "");
+      if (k && !seenF.has(k)){ seenF.add(k); facts.push(String(f)); }
+    }
+    const n = String(u.note || "").trim();
+    if (n && n !== "새로 감지됨" && !seenN.has(n)){ seenN.add(n); notes.push({at: u.at, note: n}); }
   }
+  if (!notes.length && c.why) notes.push({at: c.updated_at, note: String(c.why)});
+  const sources = [], seenU = new Set();
+  for (const s of (Array.isArray(c.sources) ? c.sources : [])){
+    if (!s || !s.url || seenU.has(s.url)) continue;
+    seenU.add(s.url); sources.push(s);
+  }
+  sources.sort((a,b)=> new Date(b.published_at) - new Date(a.published_at));
+  const hay = [c.headline, ...(c.targets||[]), ...notes.map(n=>n.note), ...facts].join(" ").toLowerCase();
+  c._v = {stamp, facts, notes, sources, hay};
+  return c._v;
+}
 
-  const primaryGroups = [];
-  const low = [];
-  for (const [key, items] of groupsMap){
-    if (items.some(c=>c.impact!=="low")){
-      items.sort(byImpactThenRecency);
-      primaryGroups.push({key, items});
-    } else {
-      low.push(...items);
+// 걸러 보기: 중요도 / 채널 / 검색어
+function clusterPasses(c){
+  if (impactFilter === "high" && c.impact !== "high") return false;
+  if (impactFilter === "medium" && c.impact === "low") return false;
+  const v = clusterView(c);
+  if (channelFilter && !v.sources.some(s=>s.source === TG_PREFIX + channelFilter)) return false;
+  if (tgQuery){
+    if (v.hay.includes(tgQuery)) return true;
+    return v.sources.some(s=> decodeEnt(tgByUrl.get(s.url)?.summary || s.title || "").toLowerCase().includes(tgQuery));
+  }
+  return true;
+}
+function postPasses(it){
+  if (channelFilter && it.source !== TG_PREFIX + channelFilter) return false;
+  const c = clusterByUrl.get(it.url);
+  if (impactFilter === "high" && !(c && c.impact === "high")) return false;
+  if (impactFilter === "medium" && c && c.impact === "low") return false;
+  if (tgQuery && !decodeEnt(it.summary || it.title || "").toLowerCase().includes(tgQuery)) return false;
+  return true;
+}
+
+function impactBadge(impact, small){
+  return `<span class="sig-badge${small ? " sig-badge-sm" : ""}" style="background:var(${IMPACT_VAR[impact]||"--sub"})">${IMPACT_LABEL[impact]||"낮음"}</span>`;
+}
+
+// 회사/주제 카드 안의 사건 하나
+function eventHtml(c, groupKey){
+  const v = clusterView(c);
+  const others = (c.targets||[]).filter(t=>t!==groupKey);
+  const chips = others.slice(0, 4).map(t=>`<span class="sig-target">${esc(t)}</span>`).join("")
+    + (others.length > 4 ? `<span class="sig-target" title="${esc(others.slice(4).join(", "))}">+${others.length - 4}</span>` : "");
+  let body = "";
+  if (v.notes.length){
+    body += `<div class="sig-why">${noteHtml(v.notes[0].note)}</div>`;
+    // 숫자 목록이 없는 옛 카드는 예전 설명들에 숫자가 들어 있으니 전부 보여줌(예전엔 마지막 설명 하나만 보였음)
+    if (!v.facts.length){
+      body += v.notes.slice(1).map(n=>`<div class="sig-why old-note"><span class="sig-timeline-time">${kstTimeLabel(n.at)}</span>${noteHtml(n.note)}</div>`).join("");
     }
   }
-  // 상단 카드 순서(2026-09-23 변경): impact 우선순위가 아니라 "이 카드가 가장 최근에
-  // 업데이트된 순"으로 정렬 — 업데이트 누를 때마다 방금 바뀐 카드가 맨 위로 오게 하기 위함.
-  // 카드 내부 개별 항목 순서(items.sort 위)는 기존대로 impact 우선 유지.
-  primaryGroups.sort((a,b)=>groupLatestUpdatedAt(b.items) - groupLatestUpdatedAt(a.items));
-  low.sort(byImpactThenRecency); // low 안은 전부 impact가 같으므로(=low) 사실상 이미 시간순
+  if (v.facts.length) body += `<ul class="facts">${v.facts.map(f=>`<li>${hl(f)}</li>`).join("")}</ul>`;
+  if (!v.notes.length && !v.facts.length){
+    // 설명이 아예 없는 카드(옛 "낮음" 카드)는 원문 앞부분을 그대로 보여줌
+    const first = v.sources.map(s=>tgByUrl.get(s.url)).find(Boolean);
+    if (first && first.summary) body += `<div class="excerpt">${hl(String(first.summary).slice(0, 400))}</div>`;
+  }
+  const more = v.facts.length && v.notes.length > 1 ? ` · 설명 이력 ${v.notes.length}건` : "";
+  return `
+    <div class="sig-subitem">
+      <div class="sig-subitem-top">${impactBadge(c.impact, true)}${chips}<span class="sig-src">${kstTimeLabel(c.updated_at)}</span></div>
+      <div class="sig-subitem-title">${newBadge(c.updated_at)}${esc(decodeEnt(c.headline))}</div>
+      ${body}
+      <button class="link-btn" data-open="${esc(c.id)}">원문 ${v.sources.length}건${more} 보기 ›</button>
+    </div>`;
+}
 
-  const primaryHtml = primaryGroups.length
-    ? primaryGroups.map(g=>renderGroupCard(g)).join("")
-    : `<div class="empty">눈에 띄는 시그널 없음</div>`;
-
-  const lowHtml = low.length
-    ? `<details class="sig-low-group"><summary>낮은 중요도 ${low.length}건 보기</summary>
-        <div class="sig-low-list">${low.map(c=>renderClusterCard(c,true)).join("")}</div>
-      </details>`
-    : "";
-
-  return primaryHtml + lowHtml;
+// 회사/주제 카드 — targets[0](대표 회사/주제명, summarize.js가 이 순서를 보장) 기준으로 묶음. 안의 사건은 중요도 → 최근순
+function groupHtml(g){
+  const best = g.items[0].impact;
+  const latestIso = g.items.reduce((m,c)=> new Date(c.updated_at) > new Date(m) ? c.updated_at : m, g.items[0].updated_at);
+  return `
+    <div class="sig-group${best === "low" ? " low-only" : ""}">
+      <div class="sig-group-top">
+        ${impactBadge(best)}
+        <span class="sig-group-title">${esc(g.key)}</span>
+        ${g.items.length > 1 ? `<span class="sig-group-count">${g.items.length}건</span>` : ""}
+        <span class="sig-src">최근 ${kstTimeLabel(latestIso)}</span>
+      </div>
+      <div class="sig-group-items">${g.items.map(c=>eventHtml(c, g.key)).join("")}</div>
+    </div>`;
+}
+function groupClusters(clusters){
+  const map = new Map();
+  for (const c of clusters){
+    const key = (c.targets && c.targets[0]) ? String(c.targets[0]) : "기타";
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(c);
+  }
+  const latest = items => items.reduce((mx,c)=> Math.max(mx, new Date(c.updated_at).getTime()), 0);
+  const groups = [...map].map(([key, items])=>{
+    items.sort((a,b)=> ((IMPACT_ORDER[a.impact]??3) - (IMPACT_ORDER[b.impact]??3)) || (new Date(b.updated_at) - new Date(a.updated_at)));
+    return {key, items, latest: latest(items)};
+  });
+  // 순서: 중간 이상이 하나라도 있는 카드가 먼저(최근 갱신순), 낮음만 있는 카드는 그 뒤(최근 갱신순) — 접지 않고 다 보여줌
+  groups.sort((a,b)=> ((a.items[0].impact === "low") - (b.items[0].impact === "low")) || (b.latest - a.latest));
+  return groups;
+}
+function gridHtml(clusters, emptyMsg){
+  if (!clusters.length) return `<div class="empty">${emptyMsg}</div>`;
+  return `<div class="grid">${groupClusters(clusters).map(groupHtml).join("")}</div>`;
 }
 
 // ── 맨 위 "지금 중요한 것"(2026-11-26 추가) ─────────────────────────
@@ -537,73 +589,121 @@ function hotListHtml(clusters){
   if (!hot.length) return "";
   const nNew = hot.filter(c=>isNewSinceSeen(c.updated_at)).length;
   const rows = hot.map(c=>{
+    const v = clusterView(c);
     const key = (c.targets && c.targets[0]) || "기타";
-    // 요약 첫 줄만(리포트형은 "[BEAT]" 한 줄 뒤에 숫자가 오니까 그땐 다음 줄까지 붙임)
-    const lines = String(c.why || "").split("\n").map(l=>l.trim()).filter(Boolean);
+    // 설명 첫 줄만(리포트형은 "[BEAT]" 한 줄 뒤에 숫자가 오니까 그땐 다음 줄까지 붙임) — 전체는 눌러서 옆 패널에서
+    const lines = String(v.notes[0]?.note || "").split("\n").map(l=>l.trim()).filter(Boolean);
     let firstLine = lines[0] || "";
     if (/^\[(BEAT|MISS|혼조|IN-LINE)\]$/.test(firstLine) && lines[1]) firstLine += " " + lines[1];
-    const why = firstLine.length > 140 ? firstLine.slice(0, 140) + "…" : firstLine;
-    const keyHtml = String(c.headline || "").startsWith(key) ? "" : `<span class="hot-key">${esc(key)}</span>`;
-    const url = (c.sources && c.sources[0] && c.sources[0].url) || "";
+    const why = firstLine.length > 160 ? firstLine.slice(0, 160) + "…" : firstLine;
+    const headline = decodeEnt(c.headline);
+    const keyHtml = headline.startsWith(key) ? "" : `<span class="hot-key">${esc(key)}</span>`;
     return `<div class="hot-row">${newBadge(c.updated_at)}<span class="hot-time">${kstTimeLabel(c.updated_at)}</span>${keyHtml}`
-      + (url ? `<a href="${safeUrl(url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(c.headline)}</a>` : esc(c.headline))
-      + (why ? `<div class="hot-why">${esc(why)}</div>` : "")
+      + `<button class="link-btn" data-open="${esc(c.id)}">${esc(headline)}</button>`
+      + (why ? `<div class="hot-why">${noteHtml(why)}</div>` : "")
       + `</div>`;
   }).join("");
-  return `<div class="hot-box"><div class="hot-title">지금 중요한 것 · 높음 ${hot.length}건${nNew ? ` (새로 ${nNew}건)` : ""}</div>${rows}</div>`;
+  return `<div class="hot-box"><div class="hot-title">지금 중요한 것 · 높음 ${hot.length}건${nNew ? ` (새로 ${nNew}건)` : ""}</div><div class="hot-rows">${rows}</div></div>`;
 }
 
-// ── 업데이트를 누른 순간별로 나눠서 보기(2026-09-29 추가) ─────────────
-// summarize.js가 기사(sources)와 요약 메모(updates)에 run_at(버튼 누른 시각)을 붙여 저장함.
-// 클러스터 하나를 run_at별로 쪼갠 "가상 클러스터"(그 순간에 새로 들어온 기사/메모만 담음)를 만들어서
-// 누른 순간마다 줄(구분선)을 긋고 그 아래에 그때 바뀐 카드만 보여줌. 같은 회사 카드가 여러 번
-// 업데이트됐으면 누른 순간마다 따로 나옴. run_at이 없는 예전 기록은 맨 아래 "이전 기록"에 모아둠.
-function roundLabel(iso, dayKey){
-  const t = kstTimeLabel(iso);
-  return kstDayKeyPadded(iso) === dayKey ? t : `${monthDayLabel(kstDayKeyPadded(iso))} ${t}`;
+// ── "원문 전체" 보기 — 수집된 텔레그램 글을 하나도 안 빼고 그대로(최근순). 누르면 펼쳐짐 ──
+function postHtml(it, inDrawer){
+  const c = clusterByUrl.get(it.url);
+  const badge = c ? impactBadge(c.impact, true)
+    : `<span class="sig-badge sig-badge-sm" style="background:var(--info)" title="아직 AI 정리 전 — 5분 안에 자동으로 정리됨">정리 대기</span>`;
+  const ch = String(it.source || "").replace(TG_PREFIX, "");
+  const into = c && !inDrawer ? `<button class="link-btn" data-open="${esc(c.id)}" title="이 글이 들어간 카드 열기">→ ${esc(decodeEnt(c.headline))}</button>` : "";
+  return `
+    <div class="post${openPosts.has(it.url) ? " open" : ""}" data-post="${esc(it.url)}">
+      <div class="post-top">${inDrawer ? "" : badge}<span class="post-ch">${esc(ch)}</span><span>${inDrawer ? kstFullLabel(it.published_at) : kstTimeLabel(it.published_at)}</span>
+        <a href="${safeUrl(it.url)}" target="_blank" rel="noopener">텔레그램에서 열기 ↗</a></div>
+      <div class="post-text">${hl(it.summary || it.title || "")}</div>
+      ${into}
+    </div>`;
 }
-function roundDividerHtml(text){
-  return `<div class="round-divider"><span>${text}</span></div>`;
+function rawHtml(posts, emptyMsg){
+  if (!posts.length) return `<div class="empty">${emptyMsg}</div>`;
+  return `<div class="grid">${posts.map(it=>postHtml(it, false)).join("")}</div>`;
 }
-function roundListHtml(clusters, emptyMsg, dayKey){
-  if (!clusters.length) return `<div class="empty">${emptyMsg}</div>`;
-  const rounds = new Map(); // run_at -> 가상 클러스터[]
-  const legacy = [];
-  const maxPub = (arr, fallback) => arr.reduce((m,x)=> x.published_at && new Date(x.published_at) > new Date(m) ? x.published_at : m, fallback);
-  for (const c of clusters){
-    const sources = Array.isArray(c.sources) ? c.sources : [];
-    const updates = Array.isArray(c.updates) ? c.updates : [];
-    const runs = new Set([...sources, ...updates].map(x=>x.run_at).filter(Boolean));
-    const oldSources = sources.filter(x=>!x.run_at), oldUpdates = updates.filter(x=>!x.run_at);
-    if (!runs.size || oldSources.length || oldUpdates.length){
-      const oldNote = oldUpdates.length ? oldUpdates[oldUpdates.length-1].note : (runs.size ? "" : c.why);
-      legacy.push({...c, sources: oldSources, updates: oldUpdates, why: oldNote, updated_at: maxPub(oldSources, c.updated_at)});
-    }
-    for (const r of runs){
-      const rs = sources.filter(x=>x.run_at===r), ru = updates.filter(x=>x.run_at===r);
-      const note = ru.map(u=>u.note).filter(n=>n && n!=="새로 감지됨").join(" / ");
-      rounds.set(r, [...(rounds.get(r)||[]), {...c, sources: rs, updates: ru, why: note, updated_at: maxPub(rs, c.updated_at)}]);
-    }
-  }
-  const runKeys = [...rounds.keys()].sort((a,b)=> new Date(b) - new Date(a));
-  let html = runKeys.map(r=>{
-    const list = rounds.get(r);
-    const nSrc = list.reduce((n,c)=>n + c.sources.length, 0);
-    return roundDividerHtml(`${roundLabel(r, dayKey)} 업데이트 · 카드 ${list.length}개 · 기사 ${nSrc}건`) + clusterListHtml(list, "");
+
+// ── 옆 패널: 카드 하나의 설명 이력 전체 + 원문 전체 ──
+let drawerId = null;
+function closeDrawer(){
+  drawerId = null;
+  document.getElementById("drawer").classList.remove("on");
+  document.getElementById("drawer-back").classList.remove("on");
+}
+async function openDrawer(id){
+  const c = allClusters.find(x=>String(x.id) === String(id));
+  if (!c) return;
+  drawerId = String(id);
+  const v = clusterView(c);
+  const el = document.getElementById("drawer");
+  const targets = (c.targets||[]).map(t=>`<span class="sig-target">${esc(t)}</span>`).join(" ");
+  const factsHtml = v.facts.length ? `<h3>숫자·사실 ${v.facts.length}줄</h3><ul class="facts">${v.facts.map(f=>`<li>${hl(f)}</li>`).join("")}</ul>` : "";
+  const notesHtml = v.notes.length
+    ? `<h3>설명 이력 ${v.notes.length}건 (최근 것부터)</h3>` + v.notes.map(n=>`<div class="sig-why" style="margin-bottom:8px"><span class="sig-timeline-time">${kstTimeLabel(n.at)}</span>${noteHtml(n.note)}</div>`).join("")
+    : "";
+  const head = `<button class="drawer-close" id="drawer-close">닫기 ✕</button>
+    <div class="sig-top" style="margin-bottom:6px">${impactBadge(c.impact)}<span class="sig-source-meta">마지막 업데이트 ${kstFullLabel(c.updated_at)}</span></div>
+    <h2>${esc(decodeEnt(c.headline))}</h2>
+    <div class="sig-top">${targets}</div>
+    ${factsHtml}${notesHtml}
+    <h3>원문 ${v.sources.length}건 (최근 것부터)</h3>`;
+  const originals = () => v.sources.map(s=>{
+    const it = tgByUrl.get(s.url);
+    return postHtml(it || {url: s.url, source: s.source, published_at: s.published_at, summary: s.title}, true);
   }).join("");
-  if (legacy.length) html += roundDividerHtml(`이전 기록 (누른 시각 구분 없음) · 카드 ${legacy.length}개`) + clusterListHtml(legacy, "");
-  return html;
+  el.innerHTML = head + originals();
+  el.scrollTop = 0;
+  el.classList.add("on");
+  document.getElementById("drawer-back").classList.add("on");
+  // 화면에 아직 없는 원문(이틀보다 오래된 글)은 그때 불러옴
+  const missing = v.sources.map(s=>s.url).filter(u=>!tgByUrl.has(u));
+  for (let i = 0; i < missing.length; i += 40){
+    const {data} = await sb.from("items").select("id,url,source,title,summary,published_at").in("url", missing.slice(i, i + 40));
+    for (const it of data || []) tgByUrl.set(it.url, it);
+  }
+  if (missing.length && drawerId === String(id)) el.innerHTML = head + originals();
 }
 
-// 텔레그램/추적키워드 2탭 분류(2026-09-22 추가, 2026-09-29 시황탭 제거) — 새 컬럼 없이
-// 기존 데이터만으로 판단: 클러스터를 이룬 기사들 중 출처(source)가 "텔레그램: "으로 시작하는
-// 게 더 많으면 텔레그램 탭, 아니면(뉴스검색/키워드 출처가 더 많으면) 추적 키워드 탭
-function classifyClusterTab(c){
-  const sources = c.sources || [];
-  if (!sources.length) return "keyword";
-  let tgCount = 0;
-  for (const s of sources) if ((s.source||"").startsWith("텔레그램:")) tgCount++;
-  return tgCount * 2 > sources.length ? "telegram" : "keyword";
+// ── 텔레그램 수집 현황 — "정말 다 보고 있나"를 눈으로 확인하는 표 ──
+// 채널별로 어제 0시부터 수집된 글 수 / 그중 AI 정리가 끝난 수 / 마지막 글 시각. 못 읽는 채널은 맨 위에 빨갛게.
+// 못 읽는 채널 목록은 수집기(scraper/collect.mjs)가 status 메모에 "못 읽는 채널: a, b"로 남긴 걸 읽음.
+function unreadableChannels(){
+  const m = String(statusRows[1]?.last_note || "").match(/못 읽는 채널: ([^·)]+)/);
+  return m ? m[1].split(",").map(s=>s.trim()).filter(Boolean) : [];
+}
+function renderCoverage(){
+  const body = document.getElementById("cov-body");
+  if (!body) return;
+  const unread = new Set(unreadableChannels());
+  const per = new Map();
+  for (const it of tgItems){
+    const h = String(it.source || "").replace(TG_PREFIX, "");
+    const p = per.get(h) || {n: 0, done: 0, last: null};
+    p.n++;
+    if (clusterByUrl.has(it.url)) p.done++;
+    if (!p.last || it.published_at > p.last) p.last = it.published_at;
+    per.set(h, p);
+  }
+  const handles = [...new Set([...channelHandles, ...per.keys()])];
+  const rows = handles.map(h=>({h, ...(per.get(h) || {n: 0, done: 0, last: null}), bad: unread.has(h) || !/^[A-Za-z0-9_]{4,}$/.test(h)}));
+  rows.sort((a,b)=> (b.bad - a.bad) || (b.n - a.n) || a.h.localeCompare(b.h));
+  const total = rows.reduce((n,r)=>n + r.n, 0), done = rows.reduce((n,r)=>n + r.done, 0);
+  const nBad = rows.filter(r=>r.bad).length, nQuiet = rows.filter(r=>!r.bad && !r.n).length;
+  document.getElementById("cov-summary").innerHTML = `텔레그램 수집 현황 — 채널 ${rows.length}개 · 어제부터 글 ${total}건 · AI 정리 ${done}건`
+    + (total - done ? ` · 정리 대기 ${total - done}건` : "")
+    + (nBad ? ` <span class="auto-warn">· 못 읽는 채널 ${nBad}개</span>` : "");
+  const state = r => r.bad
+    ? `<span class="auto-warn">${unread.has(r.h) ? "못 읽음 — 채널이 웹 미리보기를 꺼 둠" : "채널 이름이 잘못됨 — 지우고 다시 추가"}</span>`
+    : !r.n ? "어제부터 새 글 없음" : r.done < r.n ? `정리 대기 ${r.n - r.done}건` : "정상";
+  body.innerHTML = `<div class="cov-wrap"><table class="cov-table">
+      <tr><th>채널</th><th class="n">글</th><th class="n">AI 정리</th><th>마지막 글</th><th>상태</th></tr>
+      ${rows.map(r=>`<tr><td><a href="https://t.me/s/${esc(r.h)}" target="_blank" rel="noopener" style="text-decoration:none">${esc(r.h)}</a></td><td class="n">${r.n}</td><td class="n">${r.done}</td><td>${r.last ? statusLabel(r.last) : "-"}</td><td>${state(r)}</td></tr>`).join("")}
+    </table></div>
+    <div class="cov-note">글 수는 어제 0시(한국 시간)부터 수집된 것 기준.${nQuiet ? ` 새 글 없는 채널 ${nQuiet}개는 그냥 조용한 것.` : ""}<br>
+    못 읽는 것: 사진·파일만 있고 글이 없는 게시물(그림 안의 숫자는 못 읽음), 웹 미리보기를 꺼 둔 채널. 글 하나는 앞 3,000자까지 저장.</div>`;
 }
 
 let activeBriefTab = "telegram";
@@ -829,6 +929,11 @@ function renderKeywordGroupCard(g, topN = KW_TOP_CLUSTERS){
     </div>`;
 }
 
+function roundDividerHtml(text){
+  return `<div class="round-divider"><span>${text}</span></div>`;
+}
+
+// (2026-11-28) 회사 카드는 텔레그램 탭과 같은 격자(.grid)로 여러 개씩 나란히 보여줌
 // 맨 위: 급등/급락(±5% 이상) 종목의 회사 카드 구역(등락률 큰 순) → 그 아래: 기존 뉴스 정리(핵심 → 중요 순,
 // 일반 기사만 있는 회사는 접어둠). 급등락 종목은 위 구역에만 나오고 아래에는 중복해서 안 나옴.
 function renderKeywordList(elId, items, emptyMsg){
@@ -846,15 +951,15 @@ function renderKeywordList(elId, items, emptyMsg){
   const primary = others.filter(g=>kwTier(g.score) !== "normal");
   const rest = others.filter(g=>kwTier(g.score) === "normal");
   const moversHtml = movers.length
-    ? roundDividerHtml(`급등락 종목 (±${KW_MOVE_MIN}% 이상) · ${movers.length}개${kisAt ? ` · 시세 ${kstTimeLabel(kisAt)} 기준` : ""}`) + movers.map(g=>renderKeywordGroupCard(g, KW_MOVER_CLUSTERS)).join("")
+    ? roundDividerHtml(`급등락 종목 (±${KW_MOVE_MIN}% 이상) · ${movers.length}개${kisAt ? ` · 시세 ${kstTimeLabel(kisAt)} 기준` : ""}`) + `<div class="grid">${movers.map(g=>renderKeywordGroupCard(g, KW_MOVER_CLUSTERS)).join("")}</div>`
     : "";
   const primaryHead = movers.length ? roundDividerHtml("뉴스 정리 (중요도순)") : "";
   const primaryHtml = primary.length
-    ? primaryHead + primary.map(g=>renderKeywordGroupCard(g)).join("")
+    ? primaryHead + `<div class="grid">${primary.map(g=>renderKeywordGroupCard(g)).join("")}</div>`
     : (movers.length && !rest.length ? "" : primaryHead + `<div class="empty">눈에 띄는 재료 없음</div>`);
   const restHtml = rest.length
     ? `<details class="sig-low-group"><summary>일반 기사 ${rest.length}개 회사 · ${rest.reduce((n,g)=>n+g.count,0)}건 보기</summary>
-        <div class="sig-low-list">${rest.map(g=>renderKeywordGroupCard(g)).join("")}</div>
+        <div class="sig-low-list"><div class="grid">${rest.map(g=>renderKeywordGroupCard(g)).join("")}</div></div>
       </details>`
     : "";
   el.innerHTML = moversHtml + primaryHtml + restHtml;
@@ -912,9 +1017,10 @@ function renderActiveTab(){
     btn.classList.toggle("active", btn.dataset.tab === activeBriefTab);
   });
   const isKw = activeBriefTab === "keyword";
-  // 브리핑 버튼은 텔레그램 탭 전용 — 추적 키워드 탭은 요약 없이 바로 정리해서 보여줌
+  // 브리핑 버튼·걸러 보기 줄은 텔레그램 탭 전용 — 추적 키워드 탭은 요약 없이 바로 정리해서 보여줌
   document.getElementById("brief-btn").style.display = isKw ? "none" : "";
   document.getElementById("brief-status").style.display = isKw ? "none" : "";
+  document.getElementById("tg-toolbar").style.display = isKw ? "none" : "";
   if (isKw) document.getElementById("yesterday-details").style.display = "none"; // 키워드 탭엔 '어제' 구역 없음
   if (isKw){
     // 추적 키워드 탭은 오늘 것만 보여줌 — 어제 이전 기사는 수집 때 저장하지 않고 DB에서도 지움(poll.mjs)
@@ -925,26 +1031,124 @@ function renderActiveTab(){
     return;
   }
   document.getElementById("yesterday-details").style.display = "";
-  const today = cachedTodayClusters.filter(c=>classifyClusterTab(c)===activeBriefTab);
-  const yesterday = cachedYesterdayClusters.filter(c=>classifyClusterTab(c)===activeBriefTab);
-  document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)})`;
-  document.getElementById("yesterday-summary").textContent = `어제 (${monthDayLabel(cachedYestKey)})${yesterday.length ? ` — ${yesterday.length}건` : ""}`;
-  // 자동 요약(2026-11-26)부터는 5분마다 돌아서 "누른 순간별" 구분선(roundListHtml)이 하루 수백 개가 됨 →
-  // 맨 위 "지금 중요한 것" + 회사별 카드(최근 갱신순, 낮은 중요도는 접힘)로 바꿈
-  document.getElementById("brief-today").innerHTML = hotListHtml(today)
-    + clusterListHtml(today, "아직 정리된 게 없음 — 새 글이 들어오면 5분 안에 자동으로 정리됨");
-  document.getElementById("brief-yesterday").innerHTML = clusterListHtml(yesterday, "기록 없음");
+  document.querySelectorAll("#view-seg button").forEach(b=>b.classList.toggle("on", b.dataset.view === tgView));
+  document.querySelectorAll("#impact-seg button").forEach(b=>b.classList.toggle("on", b.dataset.impact === impactFilter));
+
+  const todayPosts = tgItems.filter(it=>kstDayKeyPadded(it.published_at) === cachedTodayKey);
+  const yestPosts = tgItems.filter(it=>kstDayKeyPadded(it.published_at) === cachedYestKey);
+  const todayEl = document.getElementById("brief-today"), yestEl = document.getElementById("brief-yesterday");
+  const filtered = impactFilter !== "all" || channelFilter || tgQuery;
+
+  if (tgView === "raw"){
+    const t = todayPosts.filter(postPasses), y = yestPosts.filter(postPasses);
+    document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)}) — 글 ${t.length}건${filtered ? ` (전체 ${todayPosts.length}건 중)` : ""}`;
+    document.getElementById("yesterday-summary").textContent = `어제 (${monthDayLabel(cachedYestKey)}) — 글 ${y.length}건`;
+    todayEl.innerHTML = rawHtml(t, filtered ? "조건에 맞는 글 없음" : "오늘 수집된 글 없음");
+    yestEl.innerHTML = rawHtml(y, "기록 없음");
+  } else {
+    const t = cachedTodayClusters.filter(clusterPasses), y = cachedYesterdayClusters.filter(clusterPasses);
+    document.getElementById("today-title").textContent = `오늘 (${monthDayLabel(cachedTodayKey)}) — 사건 ${t.length}건${filtered ? ` (전체 ${cachedTodayClusters.length}건 중)` : ""}`;
+    document.getElementById("yesterday-summary").textContent = `어제 (${monthDayLabel(cachedYestKey)}) — 사건 ${y.length}건`;
+    todayEl.innerHTML = hotListHtml(t)
+      + gridHtml(t, filtered ? "조건에 맞는 카드 없음" : "아직 정리된 게 없음 — 새 글이 들어오면 5분 안에 자동으로 정리됨");
+    yestEl.innerHTML = gridHtml(y, "기록 없음");
+  }
+  const pending = todayPosts.filter(it=>!clusterByUrl.has(it.url)).length;
+  document.getElementById("tool-count").textContent = `오늘 수집 글 ${todayPosts.length}건 · 사건 ${cachedTodayClusters.length}건` + (pending ? ` · 정리 대기 ${pending}건` : "");
+}
+
+// 화면을 다시 그릴 일이 한꺼번에 몰려도(실시간으로 글·카드가 연달아 들어옴) 한 번만 그림
+let tgRenderTimer = null;
+function scheduleTgRender(){
+  clearTimeout(tgRenderTimer);
+  tgRenderTimer = setTimeout(()=>{ if (activeBriefTab === "telegram") renderActiveTab(); renderCoverage(); }, 300);
+}
+
+function yesterdayStartIso(){
+  refreshDayKeys();
+  return new Date(cachedYestKey + "T00:00:00+09:00").toISOString();
 }
 
 async function loadClusters(){
-  cachedTodayKey = kstDayKeyPadded(new Date().toISOString());
-  cachedYestKey = kstDayKeyPadded(new Date(Date.now()-86400000).toISOString());
-  const {data} = await sb.from("clusters").select("*").in("day_key", [cachedTodayKey, cachedYestKey]).order("updated_at",{ascending:false});
-  const rows = data || [];
-  cachedTodayClusters = rows.filter(c=>c.day_key===cachedTodayKey);
-  cachedYesterdayClusters = rows.filter(c=>c.day_key===cachedYestKey);
-  renderActiveTab();
+  // 어제 0시 이후에 한 번이라도 갱신된 카드 전부(예전엔 만든 날짜가 오늘/어제인 것만 불러서, 그 전에 만들어졌다가
+  // 어제·오늘 글이 합쳐진 카드는 "정리 대기"로 잘못 보일 수 있었음). 화면에는 만든 날짜가 오늘/어제인 것만 나옴.
+  const since = yesterdayStartIso();
+  const {data} = await sb.from("clusters").select("*").gte("updated_at", since).order("updated_at",{ascending:false}).limit(1000);
+  allClusters = data || [];
+  clusterByUrl.clear();
+  for (const c of allClusters) for (const s of (c.sources || [])) if (s && s.url) clusterByUrl.set(s.url, c);
+  cachedTodayClusters = allClusters.filter(c=>c.day_key===cachedTodayKey);
+  cachedYesterdayClusters = allClusters.filter(c=>c.day_key===cachedYestKey);
+  scheduleTgRender();
 }
+
+// 텔레그램 원문(어제 0시부터) 불러오기 — 1000개씩 끊어서 최대 5000개
+async function loadTgItems(){
+  const since = yesterdayStartIso();
+  const rows = [];
+  for (let from = 0; from < 5000; from += 1000){
+    const {data, error} = await sb.from("items")
+      .select("id,url,source,title,summary,published_at")
+      .eq("source_type","telegram").gte("published_at", since)
+      .order("published_at",{ascending:false}).order("id",{ascending:false})
+      .range(from, from+999);
+    if (error || !data) break;
+    rows.push(...data);
+    if (data.length < 1000) break;
+  }
+  tgItems = rows;
+  for (const it of rows) tgByUrl.set(it.url, it);
+  renderChannelSelect();
+  scheduleTgRender();
+}
+function addTgItemLive(it){
+  if (it.source_type !== "telegram" || tgByUrl.has(it.url)) return;
+  tgByUrl.set(it.url, it);
+  tgItems.unshift(it);
+  tgItems.sort((a,b)=> new Date(b.published_at) - new Date(a.published_at));
+  scheduleTgRender();
+}
+
+function renderChannelSelect(){
+  const sel = document.getElementById("ch-select");
+  const counts = new Map();
+  for (const it of tgItems){ const h = String(it.source || "").replace(TG_PREFIX, ""); counts.set(h, (counts.get(h) || 0) + 1); }
+  const handles = [...new Set([...channelHandles, ...counts.keys()])].sort((a,b)=> (counts.get(b)||0) - (counts.get(a)||0) || a.localeCompare(b));
+  sel.innerHTML = `<option value="">채널 전체 (${handles.length}개)</option>`
+    + handles.map(h=>`<option value="${esc(h)}">${esc(h)} (${counts.get(h)||0})</option>`).join("");
+  sel.value = handles.includes(channelFilter) ? channelFilter : "";
+  if (!sel.value) channelFilter = "";
+}
+
+// 걸러 보기 줄 동작
+document.getElementById("view-seg").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-view]"); if (!b) return;
+  tgView = b.dataset.view; setPref("radar_view", tgView); renderActiveTab();
+});
+document.getElementById("impact-seg").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-impact]"); if (!b) return;
+  impactFilter = b.dataset.impact; setPref("radar_impact", impactFilter); renderActiveTab();
+});
+document.getElementById("ch-select").addEventListener("change", e=>{ channelFilter = e.target.value; renderActiveTab(); });
+let searchTimer = null;
+document.getElementById("tg-search").addEventListener("input", e=>{
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(()=>{ tgQuery = e.target.value.trim().toLowerCase(); renderActiveTab(); }, 200);
+});
+// 카드의 "원문 보기" → 옆 패널 / "원문 전체"의 글 → 누르면 펼침
+document.addEventListener("click", e=>{
+  const open = e.target.closest("[data-open]");
+  if (open){ e.preventDefault(); openDrawer(open.dataset.open); return; }
+  if (e.target.closest("#drawer-close") || e.target.id === "drawer-back"){ closeDrawer(); return; }
+  if (e.target.closest("a")) return;
+  const post = e.target.closest(".post[data-post]");
+  if (post && !post.closest("#drawer") && !String(window.getSelection())){
+    const url = post.dataset.post;
+    if (openPosts.has(url)) openPosts.delete(url); else openPosts.add(url);
+    post.classList.toggle("open");
+  }
+});
+document.addEventListener("keydown", e=>{ if (e.key === "Escape") closeDrawer(); });
 
 document.querySelectorAll(".tab-btn").forEach(btn=>{
   btn.addEventListener("click", ()=>{
@@ -1036,52 +1240,7 @@ document.getElementById("kw-add-btn").onclick = addKeyword;
 document.getElementById("tg-add-btn").onclick = addChannel;
 document.getElementById("kw-input").addEventListener("keydown", e=>{if(e.key==="Enter")addKeyword();});
 document.getElementById("tg-input").addEventListener("keydown", e=>{if(e.key==="Enter")addChannel();});
-document.getElementById("search-input").addEventListener("input", e=>{searchTerm = e.target.value.toLowerCase(); renderFeed();});
 
-function renderCatPills(){
-  const el = document.getElementById("cat-pills");
-  el.innerHTML = "";
-  CATS.forEach(([key,label,varName])=>{
-    const pill = document.createElement("div");
-    pill.className = "cat-pill" + (activeCat===key ? " active" : "");
-    pill.innerHTML = key==="all" ? `<span>${label}</span>` : `<span class="dot" style="background:var(${varName})"></span><span>${label}</span>`;
-    pill.onclick = ()=>{ activeCat = key; renderCatPills(); renderFeed(); };
-    el.appendChild(pill);
-  });
-}
-
-function renderFeed(){
-  let list = allItems;
-  if (activeCat!=="all") list = list.filter(it=>it.category===activeCat);
-  if (searchTerm) list = list.filter(it=>(it.title+it.summary).toLowerCase().includes(searchTerm));
-  const el = document.getElementById("feed");
-  if (!list.length){ el.innerHTML = `<div class="empty">해당하는 항목이 없음</div>`; return; }
-
-  let html = "";
-  let lastLabel = null;
-  for (const it of list){
-    const label = dayLabel(it.published_at);
-    if (label !== lastLabel){ html += `<div class="day-label">${label}</div>`; lastLabel = label; }
-    const catInfo = CATS.find(c=>c[0]===it.category) || CATS[CATS.length-1];
-    html += `
-      <div class="item">
-        <div class="item-top">
-          <span class="dot" style="background:var(${catInfo[2]})"></span>
-          <span class="badge ${it.sentiment}">${it.sentiment}</span>
-          <span class="item-src">${it.source||""} · ${timeAgo(it.published_at)}</span>
-        </div>
-        <div class="item-title"><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a></div>
-        ${it.summary ? `<div class="item-sum">${it.summary}</div>` : ""}
-      </div>`;
-  }
-  el.innerHTML = html;
-}
-
-async function loadItems(){
-  const {data} = await sb.from("items").select("*").order("published_at",{ascending:false}).limit(300);
-  allItems = data || [];
-  renderFeed();
-}
 // 상단 시각 표시(2026-09-29): 텔레그램은 "요약 버튼을 마지막으로 누른 시각"(briefings 최신 기록),
 // 추적 키워드는 "자동 수집이 마지막으로 돈 시각"(status id 2). 텔레그램 글 수집 시각(status id 1)은 툴팁에만 표시.
 // 오늘이면 시각만, 아니면 "9/28 14:32"로 보여줌. 마우스를 올리면(툴팁) 각 결과 메모가 나옴.
@@ -1103,7 +1262,9 @@ function renderStatus(){
   const autoErr = String(auto?.last_note || "").startsWith("오류");
   el.innerHTML = `자동 정리 ${statusLabel(autoAt)}`
     + (stale ? ` <span class="auto-warn">· 자동 처리 멈춤</span>` : autoErr ? ` <span class="auto-warn">· 오류</span>` : "")
-    + ` · 텔레그램 수집 ${statusLabel(tg?.last_run_at)} · 키워드 수집 ${statusLabel(kw?.last_run_at)}`;
+    + ` · 텔레그램 수집 ${statusLabel(tg?.last_run_at)} · 키워드 수집 ${statusLabel(kw?.last_run_at)}`
+    + (unreadableChannels().length ? ` <span class="auto-warn">· 못 읽는 채널 ${unreadableChannels().length}개</span>` : "");
+  renderCoverage();
   el.title = `자동 정리: ${auto?.last_note || "-"}
 텔레그램 요약 기록: ${lastBriefing?.content || "-"}
 텔레그램 글 수집(자동): ${statusLabel(tg?.last_run_at)} — ${tg?.last_note || "-"}
@@ -1121,15 +1282,13 @@ async function loadStatus(){
 }
 
 async function init(){
-  renderCatPills();
-  await Promise.all([loadKeywords(), loadChannels(), loadItems(), loadClusters(), loadKeywordItems(), loadPriceMoves()]);
+  await Promise.all([loadKeywords(), loadChannels(), loadTgItems(), loadClusters(), loadKeywordItems(), loadPriceMoves()]);
   await loadStatus();
 
   // 실시간 구독 — DB에 새 행이 쓰이는 즉시 화면 반영 (수집은 아래 autoCollect가 5분마다 부르는 /api/poll)
   sb.channel("public:items")
     .on("postgres_changes", {event:"INSERT", schema:"public", table:"items"}, payload=>{
-      allItems = [payload.new, ...allItems.filter(it=>it.id!==payload.new.id)];
-      renderFeed();
+      addTgItemLive(payload.new);
       addKeywordItemLive(payload.new);
     })
     .subscribe();
@@ -1164,7 +1323,6 @@ async function init(){
     .on("postgres_changes", {event:"*", schema:"public", table:"telegram_channels"}, loadChannels)
     .subscribe();
 
-  setInterval(renderFeed, 30000); // "n분 전" 텍스트 갱신용
   setInterval(renderStatus, 60000); // "자동 처리 멈춤" 경고가 시간이 지나면 뜨도록
 
   // 자동 처리(2026-11-26): 주 경로는 Supabase 예약(pg_cron)이 5분마다 /api/tick을 부르는 것. 화면을 열어 두면

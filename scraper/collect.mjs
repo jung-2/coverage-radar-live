@@ -89,24 +89,55 @@ async function runPool(tasks, worker) {
   return results;
 }
 
+// HTML 글자 표기(&amp; &#036; 등)를 원래 글자로 되돌림
+const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+export function decodeEntities(s) {
+  return String(s || "").replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+    if (e[0] === "#") {
+      const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+    }
+    return ENTITIES[e.toLowerCase()] ?? m;
+  });
+}
+
+// 글 본문 HTML → 읽을 수 있는 글자(2026-11-28 고침): 줄바꿈(<br>)은 살리고, 나머지 태그는 지우고, &amp; 같은 표기는 원래 글자로.
+// 예전엔 줄바꿈을 전부 띄어쓰기로 바꿔서 "• 매출 … • 영업이익 …" 같은 숫자 목록이 한 줄로 뭉개졌음.
+function htmlToText(html) {
+  return decodeEntities(String(html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, " "))
+    .replace(/[^\S\n]+/g, " ").replace(/ ?\n ?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 // t.me/s 페이지 HTML → 글 목록(오래된 것부터). id = 채널 안 글 번호
+// (2026-11-28 고침) 답글로 쓴 글은 "인용한 옛 글 미리보기"가 본문보다 먼저 나오는데, 예전엔 처음 나온 걸 본문으로 읽어서
+// 답글의 진짜 내용 대신 인용된 옛 글이 저장됐음(같은 글이 두 번 들어간 것처럼 보이고 새 내용은 통째로 빠짐).
+// 지금은 인용 미리보기(js-message_reply_text)는 건너뛰고 진짜 본문만 읽음. "○○ pinned «…»" 같은 알림 글은 글이 아니라서 뺌.
 export function parseTelegramPage(html, handle) {
   const blocks = html.split('class="tgme_widget_message ').slice(1);
   const posts = [];
   for (const block of blocks) {
+    const classes = block.slice(0, block.indexOf('"'));
     const postMatch = block.match(/data-post="([^"]+)"/);
     const timeMatch = block.match(/<time[^>]*datetime="([^"]+)"/);
-    const textMatch = block.match(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/);
     if (!postMatch || !timeMatch) continue;
+    if (/service_message/.test(classes)) continue;
+    let bodyHtml = "";
+    for (const m of block.matchAll(/<div class="(tgme_widget_message_text[^"]*)"[^>]*>([\s\S]*?)<\/div>/g)) {
+      if (/reply/.test(m[1])) continue;
+      bodyHtml = m[2];
+      break;
+    }
     const id = Number(postMatch[1].split("/").pop());
-    const rawText = textMatch ? textMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "";
+    const rawText = htmlToText(bodyHtml);
+    if (/^.{1,60} pinned «/.test(rawText)) continue;
     posts.push({ id, post: postMatch[1], time: timeMatch[1], rawText });
   }
   return posts.map((p) => ({ ...p, handle }));
 }
 
 function telegramItem(p) {
-  const title = p.rawText.length > 60 ? p.rawText.slice(0, 60) + "…" : p.rawText;
+  const flat = p.rawText.replace(/\s+/g, " ");
+  const title = flat.length > 60 ? flat.slice(0, 60) + "…" : flat;
   return {
     title,
     // 뉴스정리/브리핑 스타일 글은 꽤 길 수 있어서 넉넉하게 저장(2026-09-23 늘림) —
@@ -127,6 +158,13 @@ async function fetchTelegramPage(handle, beforeId) {
   const url = `https://t.me/s/${handle}` + (beforeId ? `?before=${beforeId}` : "");
   const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; coverage-radar-bot/1.0)" } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  // 웹 미리보기가 꺼진 채널은 t.me/s/<채널>이 채널 소개 페이지(t.me/<채널>)로 넘어가 버려서 글이 하나도 안 나옴.
+  // 예전엔 이걸 "새 글 없음"으로 알고 조용히 넘어갔음 → 지금은 "못 읽는 채널"로 따로 표시함(2026-11-28)
+  if (res.url && !new URL(res.url).pathname.startsWith("/s/")) {
+    const err = new Error("웹 미리보기가 꺼진 채널");
+    err.unreadable = true;
+    throw err;
+  }
   return parseTelegramPage(await res.text(), handle);
 }
 
@@ -147,7 +185,7 @@ export async function fetchTelegramItems(handle, knownMaxId, stats) {
     if (pages > 1) stats.backfilledPages += pages - 1;
     return posts.filter((p) => p.rawText && (knownMaxId == null || p.id > knownMaxId)).map(telegramItem);
   } catch (err) {
-    stats.failedChannels++;
+    if (err.unreadable) stats.unreadable.push(handle); else stats.failedChannels++;
     console.error(`[telegram] ${handle} 실패:`, err.message);
     return [];
   }
@@ -179,7 +217,7 @@ export function startOfTodayKstIso() {
 // mode: "telegram" | "keywords". 둘을 따로 돌려서, 키워드 수집이 느려지거나 차단돼도 텔레그램 수집은 영향이 없게 함.
 // trigger: 누가 돌렸는지(status 메모에 남김 — "github" | "화면")
 export async function runCollect(supabase, mode, { trigger = "github" } = {}) {
-  const stats = { failedSearches: 0, failedChannels: 0, backfilledPages: 0 };
+  const stats = { failedSearches: 0, failedChannels: 0, backfilledPages: 0, unreadable: [] };
   let allItems = [];
   let note = "";
 
@@ -225,7 +263,9 @@ export async function runCollect(supabase, mode, { trigger = "github" } = {}) {
     allItems = results.flat().filter((it) => it.url && it.title);
     note = `텔레그램 채널 ${channels.length}개`
       + (stats.backfilledPages ? ` · 빠진 글 ${stats.backfilledPages}페이지 더 읽음` : "")
-      + (stats.failedChannels ? ` · ${stats.failedChannels}개 채널 실패` : "");
+      + (stats.failedChannels ? ` · ${stats.failedChannels}개 채널 실패` : "")
+      // 화면(web/index.html "수집 현황")이 이 문구("못 읽는 채널: a, b")를 읽어서 경고로 보여줌 — 형식을 바꾸면 화면도 같이 바꿀 것
+      + (stats.unreadable.length ? ` · 못 읽는 채널: ${stats.unreadable.join(", ")}` : "");
   }
 
   console.log(`수집된 원시 항목: ${allItems.length}건 (중복은 DB unique(url)에서 자동 무시)`);

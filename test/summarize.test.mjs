@@ -132,3 +132,54 @@ test("48시간보다 오래된 백로그는 건너뜀", async () => {
   assert.equal(r.item_count, 1);
   assert.deepEqual(clusterUrls(), ["https://t.me/ch/0002"]);
 });
+
+// ── 2026-11-28 추가: 숫자·사실 목록(facts), 잡동사니 통 막기 ──
+// 가짜 Gemini가 이번 한 번만 이 함수가 만든 updates로 답하게 함
+function answerWith(makeUpdates) {
+  const prev = globalThis.fetch;
+  globalThis.fetch = async (url, opt) => {
+    const body = JSON.parse(opt.body);
+    const name = body.tools[0].functionDeclarations[0].name;
+    if (name !== "emit_updates") return prev(url, opt);
+    globalThis.fetch = prev;
+    geminiCalls++;
+    return geminiOk({ __name: name, updates: makeUpdates(body.contents[0].parts[0].text) });
+  };
+}
+
+test("AI가 준 숫자·사실 목록을 카드에 저장하고, 같은 카드에 글이 더 붙으면 이력으로 쌓임", async () => {
+  db.DB.items.push(tgItem(1, microIso(NOW - 120e3)));
+  answerWith(() => [{ indices: [1], existing_cluster_ref: 0, headline: "메이투안 3분기 실적", impact: "high", targets: ["메이투안"],
+    note: "[BEAT]\n매출 예상 상회", facts: ["• 매출 1,155.6억위안(+21.6% YoY)", "매출 1,155.6억위안(+21.6% YoY)", "조정 순이익 18.5억위안 vs. 예상 22억위안", 42] }]);
+  await press(false);
+  assert.deepEqual(db.DB.clusters[0].updates[0].facts, ["매출 1,155.6억위안(+21.6% YoY)", "조정 순이익 18.5억위안 vs. 예상 22억위안"], "앞 기호·겹치는 줄·글자가 아닌 값은 정리됨");
+
+  db.DB.items.push(tgItem(2, microIso(NOW - 60e3)));
+  answerWith(() => [{ indices: [1], existing_cluster_ref: 1, headline: "", impact: "medium", targets: ["메이투안"], note: "", facts: ["핵심 로컬 커머스 영업이익률 7.3%"] }]);
+  await press(true);
+  assert.equal(db.DB.clusters.length, 1);
+  assert.equal(db.DB.clusters[0].sources.length, 2);
+  assert.deepEqual(db.DB.clusters[0].updates.map(u => u.facts), [["매출 1,155.6억위안(+21.6% YoY)", "조정 순이익 18.5억위안 vs. 예상 22억위안"], ["핵심 로컬 커머스 영업이익률 7.3%"]], "설명이 비어도 숫자 목록은 이력에 남음");
+});
+
+test("AI에게 글 본문을 1500자까지 보여줌(400자 뒤쪽 숫자가 잘리지 않게)", async () => {
+  db.DB.items.push(tgItem(1, microIso(NOW - 60e3), { summary: "가".repeat(1200) + " 끝쪽숫자 987.6억원" }));
+  let seen = "";
+  answerWith((prompt) => { seen = prompt; return [{ indices: [1], existing_cluster_ref: 0, headline: "사건", impact: "low", targets: ["회사"], note: "한 줄", facts: [] }]; });
+  await press(false);
+  assert.match(seen, /987\.6억원/);
+});
+
+test("'기타 소식 모음' 같은 잡동사니 통은 만들지 않고 글 하나씩 따로, 이미 있는 통에는 더 넣지 않음", async () => {
+  const today = new Date(NOW + 9 * 3600e3).toISOString().slice(0, 10);
+  db.DB.clusters.push({ id: 900, day_key: today, headline: "기타 소식 모음 삼십번", impact: "low", targets: ["기타소식"], why: "",
+    sources: [{ url: "https://t.me/ch/9000", source: "텔레그램: ch", published_at: new Date(NOW - 3600e3).toISOString() }], updates: [], updated_at: new Date(NOW - 1800e3).toISOString() });
+  for (let i = 1; i <= 3; i++) db.DB.items.push(tgItem(i, microIso(NOW - 60e3)));
+  let seen = "";
+  answerWith((prompt) => { seen = prompt; return [{ indices: [1, 2, 3], existing_cluster_ref: 0, headline: "기타 소식 모음", impact: "low", targets: ["기타소식"], note: "이것저것", facts: [] }]; });
+  await press(false);
+  assert.ok(!seen.includes("기타 소식 모음 삼십번"), "잡동사니 통은 합칠 대상 목록에 안 보여줌");
+  const fresh = db.DB.clusters.filter(c => c.id !== 900);
+  assert.equal(fresh.length, 3, "글 3개가 카드 3개로 따로");
+  assert.equal(db.DB.clusters.find(c => c.id === 900).sources.length, 1, "옛 통은 그대로");
+});

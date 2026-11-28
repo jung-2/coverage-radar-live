@@ -73,8 +73,12 @@ const MAX_ITEMS = 40;               // 한 배치당 분류할 최대 신규 항
                                      // (2026-09-27 150→75, 2026-10-23 75→40: 배치가 크면 응답이 길어져서 한 번에
                                      // 1~2분씩 걸리고 형식 오류도 잦았음 — 작게 끊어서 빨리빨리 여러 번 처리하는 게 나음)
 const SCAN_LIMIT = 1000;            // 커서 이후 항목을 훑어볼 최대 개수(url/시각만 가볍게 읽음 — fetchNextBatch 참고)
-const PROMPT_SUMMARY_CHARS = 400;   // 클러스터링 프롬프트에 같이 보여줄 본문 길이(2026-10-23 추가 — 예전엔 앞 60자 제목만 보여줘서
+const PROMPT_SUMMARY_CHARS = 1500;  // 클러스터링 프롬프트에 같이 보여줄 본문 길이(2026-10-23 추가 — 예전엔 앞 60자 제목만 보여줘서
                                      // 리포트 숫자를 AI가 아예 못 봤음)
+                                     // (2026-11-28 400→1500: 글 4개 중 1개가 400자를 넘는데 그 뒤쪽은 AI가 아예 못 봐서,
+                                     //  긴 리포트 요약 글의 뒤쪽 숫자가 통째로 빠졌음. 실제 48시간 데이터로 재 보니 원문 숫자의 10%만 요약에 남았음)
+const MAX_FACTS = 30;               // 사건(update) 하나에 저장할 숫자·사실 줄 수 한도
+const MAX_FACT_CHARS = 300;         // 한 줄 최대 길이
 const SPLIT_MIN_CHARS = 300;        // 이보다 짧은 텔레그램 글은 "뉴스정리" 분리 후보에서 뺌(짧은 글은 쪼갤 게 없음)
 const SPLIT_TEXT_CHARS = 1500;      // 분리 단계에 보여줄 원문 최대 길이(원문 3000자 × 수십 건이면 프롬프트가 너무 커짐)
 const MAX_EXISTING_CLUSTERS = 80;   // 프롬프트에 보여줄 "오늘 진행 중인 클러스터" 최대 개수(이보다 많아도
@@ -95,6 +99,32 @@ const TIME_BUDGET_MS = 60 * 1000;   // 이 시간이 지나면 다음 배치를 
                                      // 넘겨버려서 Vercel이 함수를 강제 종료(FUNCTION_INVOCATION_TIMEOUT)하는 경우가
                                      // 있었음 — 마지막 배치가 끝날 여유를 충분히 두기 위해 더 보수적으로 줄임)
 const IMPACT_RANK = { high: 3, medium: 2, low: 1 };
+
+// ── 숫자·사실 목록(facts, 2026-11-28 추가) ──────────────────────────
+// 예전엔 카드에 AI가 쓴 2~3문장(note)만 남아서 원문 숫자가 거의 다 사라졌음(low는 설명 자체가 없었음).
+// 지금은 AI가 note와 별개로 "원문에 나온 숫자·사실을 한 줄씩 전부" facts로 돌려주고, 이걸 updates 이력에
+// {at, note, facts, run_at}로 같이 저장함(새 컬럼 없이 기존 updates 칸에 들어감). 화면이 모든 이력의 facts를 모아서 보여줌.
+function cleanFacts(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const f of Array.isArray(raw) ? raw : []) {
+    if (typeof f !== "string") continue;
+    const line = f.replace(/\s+/g, " ").replace(/^[-•·*▪◦]\s*/, "").trim().slice(0, MAX_FACT_CHARS);
+    const key = line.replace(/\s/g, "");
+    if (!line || seen.has(key)) continue;
+    seen.add(key);
+    out.push(line);
+    if (out.length >= MAX_FACTS) break;
+  }
+  return out;
+}
+
+// ── 잡동사니 통 막기(2026-11-28 추가) ──────────────────────────────
+// AI가 관련 없는 글을 "기타 소식 모음" 같은 카드 하나에 계속 몰아넣어서, 글 37개가 한 카드에 묻히고
+// 설명은 마지막 글 것만 남는 일이 있었음. 이런 제목의 카드는 (1) 합칠 대상 목록에서 빼서 더 안 커지게 하고
+// (2) AI가 새로 만들려고 하면 글 하나씩 따로 떼어 냄.
+const JUNK_BUCKET_RE = /^기타|(소식|뉴스|이슈|잡담|단신)\s*(모음|정리)|모음\s*\S{0,4}$/;
+function isJunkBucket(headline) { return JUNK_BUCKET_RE.test(String(headline || "").trim()); }
 const DUP_SIMILARITY_THRESHOLD = 0.45; // 이 이상이면 "같은 사건"으로 보고 강제 병합 대상으로 판단
 
 const CAT_LABEL = {
@@ -234,7 +264,7 @@ const UPDATE_TOOL = {
             },
             headline: {
               type: "string",
-              description: "existing_cluster_ref가 0일 때만 채움: 새 클러스터의 핵심을 담은 한 줄 제목 — 회사 단위 클러스터면 회사명으로 시작, 섹터 단위 클러스터면 섹터/테마명으로 시작. 원문 헤드라인을 그대로 복사하지 말고 새로 정리해서 쓸 것. 순한글로만 작성(한자 금지)",
+              description: "existing_cluster_ref가 0일 때만 채움: 새 클러스터의 핵심을 담은 한 줄 제목 — 회사 단위 클러스터면 회사명으로 시작, 섹터 단위 클러스터면 섹터/테마명으로 시작. 원문 헤드라인을 그대로 복사하지 말고 새로 정리해서 쓸 것. 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것",
             },
             impact: {
               type: "string",
@@ -249,10 +279,15 @@ const UPDATE_TOOL = {
             },
             note: {
               type: "string",
-              description: "impact가 medium 또는 high일 때만 채움: 리포트/실적 관련이면 실적(매출·영업이익·EPS, BEAT/MISS)·목표주가 변화·추정치 변화율·핵심 driver 숫자 순으로 줄바꿈 구분해서 작성, 일반 뉴스면 2~3문장 자연스러운 서술. 순한글로만 작성(한자 금지), 너무 축약하지 말 것. impact가 low면 빈 문자열",
+              description: "모든 클러스터에서 채움(low는 무슨 내용인지 한 줄이면 됨). medium/high는: 리포트/실적 관련이면 실적(매출·영업이익·EPS, BEAT/MISS)·목표주가 변화·추정치 변화율·핵심 driver 숫자 순으로 줄바꿈 구분해서 작성, 일반 뉴스면 2~3문장 자연스러운 서술. 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것, 너무 축약하지 말 것",
+            },
+            facts: {
+              type: "array",
+              items: { type: "string" },
+              description: "이 update에 속한 원문에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부 옮겨 적은 목록(중요도와 상관없이 채움). 예: \"3분기 매출 1,155.6억위안(+21.6% YoY), 컨센서스 1,133.7억위안 상회\", \"TP 30만원 → 35만원\", \"GPU 32만 5천 개를 월 12.5억 달러에 임대\". 숫자·단위·회사명·제품명은 원문 표기 그대로(AI5, HBM4, $3.50/kWh — 한글로 풀어 쓰지 말 것). 원문에 숫자가 있으면 하나도 빼지 말 것. 원문에 없는 숫자를 만들지 말 것. 숫자나 구체적 사실이 전혀 없는 잡담이면 빈 배열",
             },
           },
-          required: ["indices", "existing_cluster_ref", "headline", "impact", "targets", "note"],
+          required: ["indices", "existing_cluster_ref", "headline", "impact", "targets", "note", "facts"],
         },
       },
     },
@@ -288,7 +323,7 @@ const TELEGRAM_SPLIT_TOOL = {
               items: {
                 type: "object",
                 properties: {
-                  headline: { type: "string", description: "개별 뉴스의 한 줄 제목. 순한글로만 작성(한자 금지)" },
+                  headline: { type: "string", description: "개별 뉴스의 한 줄 제목. 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것" },
                   detail: { type: "string", description: "그 뉴스에 대해 원문에 나온 구체적 내용(숫자·사실관계 등 있는 만큼)" },
                 },
                 required: ["headline", "detail"],
@@ -538,7 +573,7 @@ async function summarizeCore(req, res, sb, GEMINI_API_KEY) {
         .order("updated_at", { ascending: false })
         .limit(MAX_EXISTING_CLUSTERS);
       if (exErr) throw exErr;
-      const existingClusters = existingClustersRaw || [];
+      const existingClusters = (existingClustersRaw || []).filter(c => !isJunkBucket(c.headline));
 
       // AI가 응답을 잘라먹거나(max_tokens) 형식을 못 맞추면(2026-10-23 추가) 예전엔 바로 오류로 끝나고 커서도
       // 안 움직여서, 다시 눌러도 같은 배치에서 계속 똑같이 실패했음. 지금은 배치를 반으로 줄여서 다시 시도하고,
@@ -581,13 +616,13 @@ ${newLines}
 - 섹터/테마 단위 클러스터에서 여러 회사가 언급되더라도, 그 회사만의 고유한 숫자(목표주가·추정치 변경·실적 등)가 리포트/기사에 구체적으로 주어진 경우에만 그 회사도 targets에 추가할 것. 단순히 예시로 이름만 스쳐 지나간 경우는 targets에 추가하지 말 것
 
 [headline 규칙]
-- headline은 existing_cluster_ref가 0일 때만 채울 것 — 새 클러스터의 핵심을 담은 새 한 줄 제목. 회사 단위면 회사명으로 시작, 섹터 단위면 섹터/테마명으로 시작. 원문 헤드라인을 그대로 복사하지 말고 새로 정리해서 쓸 것. 순한글로만 작성(한자 금지)
+- headline은 existing_cluster_ref가 0일 때만 채울 것 — 새 클러스터의 핵심을 담은 새 한 줄 제목. 회사 단위면 회사명으로 시작, 섹터 단위면 섹터/테마명으로 시작. 원문 헤드라인을 그대로 복사하지 말고 새로 정리해서 쓸 것. 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것
 
 [impact 규칙]
 - impact는 이 클러스터가 특정 종목이나 산업에 실질적인 영향을 줄 수 있는지로 판단. 이미 알려진 내용의 반복, 일반적인 시황 잡담, 영향이 불분명한 내용은 low
 
 [note 작성 규칙 — 매우 중요, 아래 형식을 반드시 지킬 것]
-note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아래 세 유형 중 해당하는 형식을 따르고, 유형마다 줄바꿈(\\n)으로 항목을 구분할 것:
+note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 한 줄이면 됨. medium/high는 아래 세 유형 중 해당하는 형식을 따르고, 유형마다 줄바꿈(\\n)으로 항목을 구분할 것:
 
 (유형 A) 증권사 리서치 리포트에서 나온 "회사 단위" 클러스터(목표주가·투자의견·실적추정치·컨센서스 비교·애널리스트 코멘트 등이 언급됨):
   - 실적이 발표되어 컨센서스와 비교된 경우, 첫 줄을 "[BEAT]" 또는 "[MISS]" 또는 "[혼조]" 중 하나로 시작(매출/영업이익/EPS 중 다수 기준으로 종합 판단). 실적 발표 자체가 없으면 이 줄은 생략
@@ -609,7 +644,17 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
 (유형 C) 리포트가 아닌 일반 뉴스(공시, 계약, 사건사고 등):
   - 기존처럼 자연스러운 문장 2~3문장으로. 기존 클러스터에 합치는 경우 이번에 새로 반영된 내용이 무엇인지, 새 클러스터인 경우 왜 중요한지. 너무 축약하지 말고 읽으면 바로 이해되게
 
-모든 유형 공통: 순한글로만 작성(한자 금지)`;
+모든 유형 공통: 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것
+- 실제로 있었던 나쁜 예: "AI5 칩"을 "에이아이오분 칩"으로, "$3.50/kWh → $5.50/kWh"를 "삼점오달러에서 오점오달러"로, "60%"를 "60퍼센트"로 풀어 쓴 것 — 전부 금지. 원문 표기 그대로 쓸 것
+
+[facts 작성 규칙 — note와 별개로 반드시 채울 것]
+- facts는 이 update에 속한 원문들에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부 옮겨 적은 목록. impact가 low여도 원문에 숫자가 있으면 채움
+- note에 이미 쓴 숫자라도 facts에 다시 적을 것. 원문에 숫자가 10개 있으면 facts에도 10개가 다 들어가야 함 — 대표 숫자 한두 개만 고르는 것 금지
+- 각 줄은 "무엇이 얼마"인지 알 수 있게 주어와 함께(예: "핵심 로컬 커머스 영업이익 57억위안(전년동기 -141억위안에서 흑자전환)"). 비교 대상(컨센서스·전년·이전 값)이 원문에 있으면 같이 적을 것
+- 원문에 없는 숫자를 만들거나 계산해서 넣지 말 것. 숫자도 구체적 사실도 없는 잡담·감상이면 빈 배열
+
+[잡동사니 통 금지]
+- 서로 관련 없는 글을 "기타 소식 모음"·"기타 뉴스"·"잡담 모음" 같은 통 하나에 몰아넣지 말 것. 관련 없는 글은 각각 따로 update를 만들고 impact를 low로 둘 것`;
 
         const { args, finishReason } = await callGemini(GEMINI_API_KEY, UPDATE_TOOL, prompt, MAX_TOKENS);
 
@@ -647,6 +692,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
             idxList: [],
             targets: new Set(clusterRow.targets || []),
             notes: [],
+            facts: [],
             impacts: [],
           });
         }
@@ -663,6 +709,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         const impact = ["high", "medium", "low"].includes(u.impact) ? u.impact : "low";
         const targets = Array.isArray(u.targets) ? u.targets.filter(Boolean) : [];
         const note = typeof u.note === "string" ? u.note.trim() : "";
+        const facts = cleanFacts(u.facts);
         const ref = Number.isInteger(u.existing_cluster_ref) ? u.existing_cluster_ref : 0;
 
         const refOriginMatches = ref >= 1 && ref <= existingClusters.length
@@ -672,16 +719,20 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
           g.idxList.push(...idxList);
           targets.forEach(t => g.targets.add(t));
           if (note) g.notes.push(note);
+          g.facts.push(...facts);
           g.impacts.push(impact);
+        } else if (isJunkBucket(u.headline) && idxList.length > 1) {
+          // 관련 없는 글을 한 통에 몰아넣으려 한 것 → 글 하나씩 따로(설명은 섞여 있어서 못 씀. 원문은 화면에서 바로 열어 볼 수 있음)
+          for (const i of idxList) newEntries.push({ idxList: [i], headline: items[i - 1].title, targets: [], impact: "low", note: "", facts: [] });
         } else {
-          newEntries.push({ idxList, headline: u.headline, targets, impact, note });
+          newEntries.push({ idxList, headline: u.headline, targets, impact, note, facts });
         }
       }
 
       // 모델이 빠뜨린 신규 항목이 있으면 단독 클러스터 후보로 자동 보충 — 분류 누락 방지용 안전장치
       for (let i = 1; i <= items.length; i++) {
         if (seen.has(i)) continue;
-        newEntries.push({ idxList: [i], headline: items[i - 1].title, targets: [], impact: "low", note: "" });
+        newEntries.push({ idxList: [i], headline: items[i - 1].title, targets: [], impact: "low", note: "", facts: [] });
       }
 
       // ── 중복 클러스터 강제 병합 안전장치 ──────────────────────
@@ -694,9 +745,10 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
           match.idxList.push(...entry.idxList);
           entry.targets.forEach(t => { if (!match.targets.includes(t)) match.targets.push(t); });
           if (entry.note) match.note = match.note ? `${match.note}\n${entry.note}` : entry.note;
+          match.facts = cleanFacts([...match.facts, ...entry.facts]);
           if (IMPACT_RANK[entry.impact] > IMPACT_RANK[match.impact]) match.impact = entry.impact;
         } else {
-          mergedNewEntries.push({ ...entry, targets: [...entry.targets] });
+          mergedNewEntries.push({ ...entry, targets: [...entry.targets], facts: [...entry.facts] });
         }
       }
 
@@ -707,7 +759,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         .select("id, headline, impact, targets, why, sources, updates, updated_at")
         .in("day_key", batchDayKeys);
       if (allErr) throw allErr;
-      const allTodayClusters = allTodayClustersRaw || [];
+      const allTodayClusters = (allTodayClustersRaw || []).filter(c => !isJunkBucket(c.headline));
 
       const finalNewEntries = [];
       for (const entry of mergedNewEntries) {
@@ -724,6 +776,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
           target.idxList.push(...entry.idxList);
           entry.targets.forEach(t => target.targets.add(t));
           if (entry.note) target.notes.push(entry.note);
+          target.facts.push(...entry.facts);
           target.impacts.push(entry.impact);
         } else {
           finalNewEntries.push(entry);
@@ -755,7 +808,10 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         const prevUpdatedAt = current.updated_at ? new Date(current.updated_at) : null;
         const nextUpdatedAt = (prevUpdatedAt && prevUpdatedAt > newItemsAt) ? prevUpdatedAt : newItemsAt;
         const mergedUpdates = [...(current.updates || [])];
-        if (mergedNote) mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, run_at: runAtIso });
+        const mergedFacts = cleanFacts(g.facts);
+        if (mergedNote || mergedFacts.length) {
+          mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, ...(mergedFacts.length ? { facts: mergedFacts } : {}), run_at: runAtIso });
+        }
 
         const { error: updErr } = await sb
           .from("clusters")
@@ -792,7 +848,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
             targets,
             why: e.note,
             sources,
-            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", run_at: runAtIso }],
+            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", ...(e.facts.length ? { facts: e.facts } : {}), run_at: runAtIso }],
             created_at: createdAt.toISOString(),
             updated_at: createdAt.toISOString(),
           };
