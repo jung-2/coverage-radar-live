@@ -822,12 +822,15 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
         if (!idxList.length) continue;
         idxList.forEach(i => seen.add(i));
 
-        const impact = ["high", "medium", "low"].includes(u.impact) ? u.impact : "low";
+        let impact = ["high", "medium", "low"].includes(u.impact) ? u.impact : "low";
         // 왜 그 중요도인지 한마디(2026-11-28 추가) — 화면 카드의 중요도 옆에 작게 보여줘서, 기준이 틀렸을 때 바로 알아볼 수 있게 함
         const reason = typeof u.impact_reason === "string" ? u.impact_reason.replace(/\s+/g, " ").trim().slice(0, 30) : "";
         const targets = Array.isArray(u.targets) ? u.targets.filter(Boolean) : [];
         const note = typeof u.note === "string" ? u.note.trim() : "";
         const facts = cleanFacts(u.facts);
+        // (2026-11-28) "높음"은 구체적 숫자·사실이 있어야 함(기준에 적힌 조건). 가벼운 모델이 명언·잡담 글을 "높음"으로
+        // 올린 적이 있어서, 숫자·사실 목록이 비어 있으면 코드에서 "중간"으로 내림
+        if (impact === "high" && !facts.length) impact = "medium";
         const ref = Number.isInteger(u.existing_cluster_ref) ? u.existing_cluster_ref : 0;
 
         const refOriginMatches = ref >= 1 && ref <= existingClusters.length
@@ -1091,6 +1094,14 @@ async function rescoreOldClusters(sb, apiKey) {
     .select("id, headline, impact, targets, why, sources, updates, updated_at")
     .eq("day_key", todayKey).order("updated_at", { ascending: false });
   if (error) throw error;
+  // "높음"인데 숫자·사실이 어느 이력에도 없는 카드는 바로 "중간"으로(AI 호출 없음)
+  for (const c of rows || []) {
+    if (c.impact !== "high" || (c.updates || []).some(u => u && Array.isArray(u.facts) && u.facts.length)) continue;
+    if (!(c.updates || []).some(u => u && u.reason)) continue; // 아직 새 기준으로 안 본 카드는 아래에서 다시 봄
+    const { error: dErr } = await sb.from("clusters").update({ impact: "medium" }).eq("id", c.id);
+    if (dErr) throw dErr;
+    c.impact = "medium";
+  }
   const pending = (rows || []).filter(c => !(c.updates || []).some(u => u && u.reason)).slice(0, RESCORE_BATCH);
   if (!pending.length) return 0;
 
@@ -1135,9 +1146,10 @@ ${cardLines}`;
   for (let i = 0; i < pending.length; i++) {
     const c = pending[i];
     const r = byIndex.get(i + 1);
-    const impact = r && ["high", "medium", "low"].includes(r.impact) ? r.impact : (c.impact || "low");
+    let impact = r && ["high", "medium", "low"].includes(r.impact) ? r.impact : (c.impact || "low");
     const note = r && typeof r.note === "string" ? r.note.trim() : "";
     const facts = r ? cleanFacts(r.facts) : [];
+    if (impact === "high" && !facts.length) impact = "medium";
     const reason = r && typeof r.impact_reason === "string" && r.impact_reason.trim()
       ? r.impact_reason.replace(/\s+/g, " ").trim().slice(0, 30) : "다시 봄";
     const updates = [...(c.updates || []), { at: c.updated_at, note, ...(facts.length ? { facts } : {}), reason, run_at: runAtIso, rescored: true }];

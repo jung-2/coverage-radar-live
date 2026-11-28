@@ -25,7 +25,7 @@ globalThis.fetch = async (url, opt) => {
   const n = Number(body.contents[0].parts[0].text.match(/총 (\d+)건/)?.[1] || 0);
   const args = name === "split_telegram_digests" ? { splits: [] } : {
     updates: Array.from({ length: n }, (_, i) => ({ indices: [i + 1], existing_cluster_ref: 0, headline: `사건 ${i}`,
-      impact: i === 0 ? "high" : "low", targets: [`회사${i}`], note: i === 0 ? "중요한 이유" : "" })),
+      impact: i === 0 ? "high" : "low", impact_reason: "전망치 변경", targets: [`회사${i}`], note: i === 0 ? "중요한 이유" : "", facts: i === 0 ? ["전망치 10% 상향"] : [] })),
   };
   return { ok: true, json: async () => ({ candidates: [{ finishReason: "STOP", content: { parts: [{ functionCall: { name, args } }] } }] }) };
 };
