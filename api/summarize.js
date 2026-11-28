@@ -1155,6 +1155,16 @@ function sourceTextFor(src, item) {
   return `${title}: ${chunks.slice(best, best + 3).join(" ")}`;
 }
 
+// 제목이 "날것"인가(2026-11-28): 링크 주소로 시작하거나, "…"로 끝나거나(원문 앞 60자를 자른 것), HTML 표기(&quot; 등)가 남아 있거나,
+// 붙은 원문의 제목(= 원문 첫 줄)과 글자까지 같은 경우. AI가 글을 빠뜨렸을 때 코드가 원문 첫 줄을 제목으로 대신 넣은 카드와,
+// 엉뚱해진 제목을 원문 제목으로 되돌린 카드가 여기에 해당함.
+function isRawTitle(c) {
+  const h = String(c.headline || "").trim();
+  if (!h) return true;
+  if (/^https?:\/\//.test(h) || /…$/.test(h) || /&(quot|gt|lt|amp|#\d+);/.test(h)) return true;
+  return (c.sources || []).some(s => s && !s.detail && String(s.title || "").trim() === h);
+}
+
 async function rescoreOldClusters(sb, apiKey) {
   const todayKey = kstDayKey(new Date());
   const { data: rows, error } = await sb.from("clusters")
@@ -1173,7 +1183,9 @@ async function rescoreOldClusters(sb, apiKey) {
   const seenNew = c => (c.updates || []).some(u => u && u.reason);
   const hasScore = c => (c.updates || []).some(u => u && typeof u.score === "number");
   const newStyle = c => (c.updates || []).some(u => u && u.style === STYLE_VERSION); // 새 문체 규칙으로 쓴 적 있는 카드
-  const pending = (rows || []).filter(c => !seenNew(c) || !hasScore(c) || !newStyle(c))
+  // 제목이 "날것"(링크 주소, 원문 첫 줄을 그대로 자른 것)인 카드는 제목을 한 번 새로 짓게 함(retitled 표시로 한 번만)
+  const needsTitle = c => isRawTitle(c) && !(c.updates || []).some(u => u && u.retitled);
+  const pending = (rows || []).filter(c => !seenNew(c) || !hasScore(c) || !newStyle(c) || needsTitle(c))
     .sort((a, b) => IMPACT_RANK[b.impact] - IMPACT_RANK[a.impact]).slice(0, RESCORE_BATCH);
   if (!pending.length) return 0;
 
@@ -1205,18 +1217,20 @@ async function rescoreOldClusters(sb, apiKey) {
     const latest = srcs.slice().sort((a, b) => (a.published_at < b.published_at ? 1 : -1))[0];
     c.headline = String(latest.title).replace(/…$/, "").trim() || c.headline;
   }
+  const rawIds = new Set(pending.filter(isRawTitle).map(c => c.id)); // 제목을 새로 지어야 하는 카드
   const cardLines = pending.map((c, i) => {
     const srcs = pick(c).map(s => `   원문: ${sourceTextFor(s, textByUrl.get(s.url)).slice(0, RESCORE_SOURCE_CHARS)}`).join("\n");
     // 기존 설명은 처음 정리할 때 쓴 것(다시 보기로 덮어쓴 것 말고) — 다시 보기가 틀렸더라도 그 틀린 내용을 물려받지 않게
     const firstNote = (c.updates || []).find(u => u && !u.rescored && u.note && u.note !== "새로 감지됨");
     const old = String((firstNote && firstNote.note) || "").replace(/\s+/g, " ").slice(0, 300);
-    return `${i + 1}. 제목: ${c.headline}${old ? `\n   기존 설명: ${old}` : ""}\n${srcs}`;
+    const titleLine = rawIds.has(c.id) ? "(아직 없음 — 아래 원문을 읽고 headline을 새로 지을 것. 원문 첫 줄이나 링크 주소를 그대로 쓰지 말 것)" : c.headline;
+    return `${i + 1}. 제목: ${titleLine}${old ? `\n   기존 설명: ${old}` : ""}\n${srcs}`;
   }).join("\n\n");
 
   const prompt = `당신은 증권사 애널리스트를 돕는 리서치 어시스턴트입니다. 아래 [카드]는 텔레그램 글을 이미 묶어서 정리해 둔 것입니다.
 카드마다 원문을 다시 읽고 중요도(impact)·점수(importance_score)·이유(impact_reason)·설명(note)·숫자 목록(facts)을 새로 매겨서 rescore_cards 도구로 반환하세요.
 카드 ${pending.length}개 전부를 빠짐없이 반환할 것.
-매우 중요: 카드마다 "제목"이 그 카드의 주제다. note·facts·headline은 반드시 그 제목의 주제에 대해서만 쓸 것. 원문에 다른 뉴스가 섞여 있어도 제목과 상관없는 내용은 전부 무시하고, 다른 주제로 바꿔 쓰지 말 것. "여러 뉴스를 모은 브리핑임" 같은 글 자체에 대한 설명은 금지.
+매우 중요: 카드마다 "제목"이 그 카드의 주제다(제목이 "아직 없음"인 카드는 원문이 주제이고, headline을 "주어 + 무슨 일 + 핵심 숫자"로 새로 지을 것). note·facts·headline은 반드시 그 제목의 주제에 대해서만 쓸 것. 원문에 다른 뉴스가 섞여 있어도 제목과 상관없는 내용은 전부 무시하고, 다른 주제로 바꿔 쓰지 말 것. "여러 뉴스를 모은 브리핑임" 같은 글 자체에 대한 설명은 금지.
 
 [impact 규칙]
 ${IMPACT_RULES}
@@ -1251,11 +1265,19 @@ ${cardLines}`;
       ? r.impact_reason.replace(/\s+/g, " ").trim().slice(0, 30) : "다시 봄";
     const hadFacts = facts.length || (c.updates || []).some(u => u && Array.isArray(u.facts) && u.facts.length);
     const score = cleanScore(r && r.importance_score, impact, hadFacts ? 1 : 0);
-    const updates = [...(c.updates || []), { at: c.updated_at, note, ...(facts.length ? { facts } : {}), reason, score, style: STYLE_VERSION, run_at: runAtIso, rescored: true }];
+    const updates = [...(c.updates || []), { at: c.updated_at, note, ...(facts.length ? { facts } : {}), reason, score, style: STYLE_VERSION, run_at: runAtIso, rescored: true,
+      ...(rawIds.has(c.id) ? { retitled: true } : {}) }];
     const newHead = r && typeof r.headline === "string" ? r.headline.replace(/\s+/g, " ").trim() : "";
     // 새 제목은 지금 제목과 닮았을 때만 받음(표기·말투만 고친 것). 주제가 바뀐 제목은 버림
-    const headline = newHead.length >= 4 && newHead.length <= 120 && !isJunkBucket(newHead)
-      && headlineSimilarity(newHead, c.headline) >= 0.3 ? newHead : c.headline;
+    const okHead = newHead.length >= 4 && newHead.length <= 120 && !isJunkBucket(newHead) && !/^https?:|…$/.test(newHead);
+    let headline = c.headline;
+    if (rawIds.has(c.id)) {
+      // 날것 제목: AI가 지은 제목을 그대로 받고, 못 지었으면 설명 첫 줄로 대신함
+      const firstLine = note.split("\n")[0].replace(/[.。]\s*$/, "").trim();
+      headline = okHead ? newHead : (firstLine.length >= 4 ? firstLine.slice(0, 70) : c.headline);
+    } else if (okHead && headlineSimilarity(newHead, c.headline) >= 0.3) {
+      headline = newHead;
+    }
     const { error: upErr } = await sb.from("clusters").update({ impact, headline, why: note || c.why, updates }).eq("id", c.id);
     if (upErr) throw upErr;
     if (impact !== c.impact) changed++;
