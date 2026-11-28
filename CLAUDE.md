@@ -18,7 +18,7 @@
 
 ## 배포 흐름 (중요)
 - `main` 브랜치에 push하면 Vercel이 자동 재배포함. GitHub Actions 수집 스크립트도 push된 코드로 다음 실행부터 바뀜
-- 그래서 `main` push = 실서비스 반영. Claude는 `main`에 직접 올리지 않고 작업 브랜치 + PR로만 올림. 실서비스 반영은 사용자가 PR 머지 버튼으로 함
+- 그래서 `main` push = 실서비스 반영. (2026-11-28 사용자 결정: "알아서 다 해 제발") Claude가 고친 뒤 시험을 통과하면 묻지 말고 바로 `main`에 올려서 실서비스에 반영하고, 반영된 걸 확인한 뒤 짧게 보고할 것. "배포할까?"라고 묻지 말 것. 예전의 "작업 브랜치 + PR, 머지는 사용자가" 방식은 사용자가 미리보기 주소와 실서비스를 헷갈려서("반영 안 됐는데") 그만둠
 - 비밀키는 절대 코드에 넣지 말 것. `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`는 GitHub Secrets, `GEMINI_API_KEY`와 Supabase 키는 Vercel 환경변수에 있음(옛 `ANTHROPIC_API_KEY`는 더 이상 안 씀). `web/index.html`에는 anon 키만 들어가도 됨(service_role 키는 절대 금지)
 - 로컬에 Supabase 키가 없으니, DB를 실제로 읽어야 확인되는 건 "Supabase 대시보드에서 이렇게 확인해 봐"처럼 사용자에게 방법을 알려 줄 것
 
@@ -59,5 +59,5 @@
 ## 작업 방식
 - 사용자가 "허가 받지 말고 알아서 해"라고 함(2026-11-26). 무엇을 할지는 Claude가 판단해서 바로 진행하고, 고친 뒤 PR과 짧은 요약으로 보고할 것. 중간에 "해도 될까?"라고 묻지 말 것. 단 위 "이미 정해진 결정사항"을 뒤집는 건 이유를 PR에 분명히 적을 것
 - 수정 후 `npm run check`(전체 문법 검사, `web/*.html` 안 스크립트 포함)와 `npm test`(가짜 DB·가짜 AI로 요약 흐름 시험, `test/`)를 돌릴 것. `summarize.js` 동작을 바꾸면 `test/summarize.test.mjs`에 시험도 같이 추가
-- 작업 흐름: 작업 브랜치에서 고치고 → PR 올림 → GitHub가 `check.yml`로 문법·시험 자동 검사 + Vercel이 미리보기 주소를 만듦 → 사용자가 미리보기 확인 → 사용자가 PR 머지(= 실서비스 반영). `main`에 직접 push하지 말 것. 단 미리보기도 실제 Supabase DB를 쓰니까, 미리보기에서 텔레그램 "업데이트"를 누르면 실제 데이터가 바뀜
+- 작업 흐름: 고침 → `npm run check`·`npm test` 통과 → `main`에 바로 push(= 실서비스 반영) → 실서비스 주소에서 반영 확인 → 짧게 보고. 사용자에게는 미리보기 주소 말고 실서비스 주소(coverage-radar-live.vercel.app)만 알려 줄 것
 - 커밋 메시지는 한국어로 무엇을 왜 바꿨는지 짧게
