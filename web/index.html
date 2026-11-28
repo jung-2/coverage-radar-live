@@ -185,10 +185,7 @@
   .note-label{font-weight:700;}
   .note-time{display:inline-block;margin-bottom:5px;}
   .facts-label{font-size:10.5px;font-weight:700;color:var(--sub);margin-top:9px;}
-  .impact-reason{font-size:10.5px;color:var(--miss);font-weight:600;white-space:nowrap;}
-  /* "왜 중요" 한 문장(2026-11-28 사용자: "지금 중요한 게 왜 중요한 건지 모르겠음") */
-  .matter{font-size:12.5px;line-height:1.55;margin-top:6px;padding:6px 8px;background:var(--stat);border-radius:6px;overflow-wrap:anywhere;}
-  .matter-label{font-size:10.5px;font-weight:700;color:var(--miss);margin-right:6px;white-space:nowrap;}
+  .impact-reason{font-size:10px;color:var(--sub);}
   .sig-subitem{padding:10px 12px;}
   .sig-subitem-title{font-size:13px;font-weight:600;line-height:1.45;}
   .sig-group-items{gap:8px;}
@@ -598,9 +595,7 @@ function clusterView(c){
   sources.sort((a,b)=> new Date(b.published_at) - new Date(a.published_at));
   const hay = [c.headline, headText(c), ...(c.targets||[]), ...notes.map(n=>n.note), ...facts].join(" ").toLowerCase();
   const reason = String((ups.find(u=>u.reason) || {}).reason || "");
-  // "왜 중요한지" 한 문장(summarize.js의 why_it_matters) — 가장 최근에 받은 것. 낮음 카드는 없음
-  const matter = c.impact === "low" ? "" : fxUnits(decodeEnt(String((ups.find(u=>u.matter) || {}).matter || "")));
-  c._v = {stamp, facts, notes, sources, hay, reason, matter};
+  c._v = {stamp, facts, notes, sources, hay, reason};
   return c._v;
 }
 
@@ -635,7 +630,7 @@ function eventHtml(c, groupKey){
   const others = (c.targets||[]).filter(t=>t!==groupKey);
   const chips = others.slice(0, 4).map(t=>`<span class="sig-target">${esc(t)}</span>`).join("")
     + (others.length > 4 ? `<span class="sig-target" title="${esc(others.slice(4).join(", "))}">+${others.length - 4}</span>` : "");
-  let body = v.matter ? `<div class="matter"><span class="matter-label">왜 중요</span>${hl(v.matter)}</div>` : "";
+  let body = "";
   if (v.notes.length){
     body += `<div class="sig-why">${noteHtml(v.notes[0].note)}</div>`;
     // 숫자 목록이 없는 옛 카드는 예전 설명들에 숫자가 들어 있으니 전부 보여줌(예전엔 마지막 설명 하나만 보였음)
@@ -744,10 +739,7 @@ function hotListHtml(clusters){
     const keyHtml = headline.startsWith(key) ? "" : `<span class="hot-key">${esc(key)}</span>`;
     return `<div class="hot-row">${newBadge(c.updated_at)}<span class="hot-time">${kstTimeLabel(c.updated_at)}</span>${keyHtml}`
       + `<button class="link-btn" data-open="${esc(c.id)}">${esc(headline)}</button>`
-      + (v.reason ? `<span class="impact-reason" style="margin-left:6px">${esc(v.reason)}</span>` : "")
-      + (v.matter ? `<div class="hot-why"><span class="matter-label">왜 중요</span>${hl(v.matter)}</div>`
-        : v.facts.length ? `<div class="hot-why">${hl(v.facts.slice(0, 2).join(" · "))}</div>`
-        : why ? `<div class="hot-why">${noteInline(why)}</div>` : "")
+      + (why ? `<div class="hot-why">${noteInline(why)}</div>` : "")
       + `</div>`;
   }).join("");
   return `<div class="hot-box"><div class="hot-title">지금 중요한 것 · 높음 ${hot.length}건</div><div class="hot-rows">${rows}</div></div>`;

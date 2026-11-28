@@ -310,8 +310,7 @@ const IMPACT_RULES = `(2026-11-28 사용자가 직접 정한 기준 — 핵심�
 - low: 새로운 의견도 숫자 변화도 없는 것 — 이미 나온 내용의 반복·재전달, 주가·지수 등락만 전하는 시황 중계, 개인 감상·잡담, 홍보·공지, 일정 안내
 - 헷갈리면 이렇게 물어볼 것: "이 글을 읽고 나서 바꿔야 할 숫자(전망·추정·가정)가 있는가?" 있으면 high 쪽, 생각은 바뀌는데 숫자는 아직이면 medium, 아무것도 안 바뀌면 low
 - 주가가 많이 올랐다/내렸다는 것만으로는 high가 아님(왜 움직였는지 새 숫자·사건이 있어야 함). 글이 길거나 유명한 사람이 썼다는 것도 이유가 안 됨
-- impact_reason에 왜 그 중요도인지 한마디로 적을 것(도구 설명의 보기 중에서 고름)
-- why_it_matters에는 high/medium일 때 "그래서 무엇이 달라지나"를 한 문장으로: 어느 산업·회사의 어떤 전망·숫자·판도가 어떻게 바뀌는지, 원문 숫자를 넣어서. 제목을 다시 말하는 것 금지. 이 문장을 쓸 수 없으면(달라지는 게 없으면) 그 글은 high가 아님`;
+- impact_reason에 왜 그 중요도인지 한마디로 적을 것(도구 설명의 보기 중에서 고름)`;
 
 const UPDATE_TOOL = {
   name: "emit_updates",
@@ -353,10 +352,6 @@ const UPDATE_TOOL = {
               enum: ["high", "medium", "low"],
               description: "이 클러스터의 중요도. 프롬프트의 [impact 규칙]대로: high = 숫자가 바뀌는 것(전망치·추정치 변경, 판도를 바꿀 이벤트, 숫자로 뒷받침된 새 의견), medium = 새 정보지만 숫자 근거가 약하거나 파급이 한 회사에 그침, low = 새 의견도 숫자 변화도 없는 반복·잡담·시황 중계",
             },
-            why_it_matters: {
-              type: "string",
-              description: "왜 중요한지 한 문장(2026-11-28 추가 — 화면 맨 위 '지금 중요한 것'에 그대로 보임). impact가 high 또는 medium이면: 이 소식 때문에 '어느 산업·회사의 무엇(전망·숫자·판도)이 어떻게 달라지는지'를 원문 숫자를 넣어 한 문장으로. 제목을 되풀이하지 말고 '그래서 뭐가 바뀌나'를 쓸 것. 예: \"HBM 가격 전망이 +10%에서 +25%로 올라가 메모리 3사 2027년 이익 추정치 상향 요인\". low면 빈 문자열",
-            },
             impact_reason: {
               type: "string",
               description: "왜 이 중요도인지 10자 안팎 한마디. high/medium이면 다음 중 하나로: \"전망치 변경\", \"판도 이벤트\", \"새 의견+숫자\", \"실적·추정치 변경\", \"가격·수급 변화\", \"새 의견(숫자 없음)\", \"개별 회사 소식\". low면 \"반복\", \"잡담\", \"시황 중계\", \"홍보\" 등",
@@ -377,7 +372,7 @@ const UPDATE_TOOL = {
               description: "이 update에 속한 원문에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부 옮겨 적은 목록(중요도와 상관없이 채움). 예: \"3분기 매출 1,155.6억위안(+21.6% YoY), 컨센서스 1,133.7억위안 상회\", \"TP 30만원 → 35만원\", \"GPU 32만 5천 개를 월 12.5억 달러에 임대\". 숫자·단위·회사명·제품명은 원문 표기 그대로(AI5, HBM4, $3.50/kWh — 한글로 풀어 쓰지 말 것). 원문에 숫자가 있으면 하나도 빼지 말 것. 원문에 없는 숫자를 만들지 말 것. 숫자나 구체적 사실이 전혀 없는 잡담이면 빈 배열",
             },
           },
-          required: ["indices", "existing_cluster_ref", "headline", "impact", "impact_reason", "why_it_matters", "targets", "note", "facts"],
+          required: ["indices", "existing_cluster_ref", "headline", "impact", "impact_reason", "targets", "note", "facts"],
         },
       },
     },
@@ -830,7 +825,6 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
         let impact = ["high", "medium", "low"].includes(u.impact) ? u.impact : "low";
         // 왜 그 중요도인지 한마디(2026-11-28 추가) — 화면 카드의 중요도 옆에 작게 보여줘서, 기준이 틀렸을 때 바로 알아볼 수 있게 함
         const reason = typeof u.impact_reason === "string" ? u.impact_reason.replace(/\s+/g, " ").trim().slice(0, 30) : "";
-        const matter = typeof u.why_it_matters === "string" ? u.why_it_matters.replace(/\s+/g, " ").trim().slice(0, 300) : "";
         const targets = Array.isArray(u.targets) ? u.targets.filter(Boolean) : [];
         const note = typeof u.note === "string" ? u.note.trim() : "";
         const facts = cleanFacts(u.facts);
@@ -848,12 +842,12 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
           if (note) g.notes.push(note);
           g.facts.push(...facts);
           g.impacts.push(impact);
-          if (reason && IMPACT_RANK[impact] >= IMPACT_RANK[g.reasonImpact || "low"]) { g.reason = reason; g.matter = matter; g.reasonImpact = impact; }
+          if (reason && IMPACT_RANK[impact] >= IMPACT_RANK[g.reasonImpact || "low"]) { g.reason = reason; g.reasonImpact = impact; }
         } else if (isJunkBucket(u.headline) && idxList.length > 1) {
           // 관련 없는 글을 한 통에 몰아넣으려 한 것 → 글 하나씩 따로(설명은 섞여 있어서 못 씀. 원문은 화면에서 바로 열어 볼 수 있음)
           for (const i of idxList) newEntries.push({ idxList: [i], headline: items[i - 1].title, targets: [], impact: "low", note: "", facts: [] });
         } else {
-          newEntries.push({ idxList, headline: u.headline, targets, impact, note, facts, reason, matter });
+          newEntries.push({ idxList, headline: u.headline, targets, impact, note, facts, reason });
         }
       }
 
@@ -874,7 +868,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
           entry.targets.forEach(t => { if (!match.targets.includes(t)) match.targets.push(t); });
           if (entry.note) match.note = match.note ? `${match.note}\n${entry.note}` : entry.note;
           match.facts = cleanFacts([...match.facts, ...entry.facts]);
-          if (IMPACT_RANK[entry.impact] > IMPACT_RANK[match.impact]) { match.impact = entry.impact; match.reason = entry.reason; match.matter = entry.matter; }
+          if (IMPACT_RANK[entry.impact] > IMPACT_RANK[match.impact]) { match.impact = entry.impact; match.reason = entry.reason; }
         } else {
           mergedNewEntries.push({ ...entry, targets: [...entry.targets], facts: [...entry.facts] });
         }
@@ -906,7 +900,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
           if (entry.note) target.notes.push(entry.note);
           target.facts.push(...entry.facts);
           target.impacts.push(entry.impact);
-          if (entry.reason && IMPACT_RANK[entry.impact] >= IMPACT_RANK[target.reasonImpact || "low"]) { target.reason = entry.reason; target.matter = entry.matter; target.reasonImpact = entry.impact; }
+          if (entry.reason && IMPACT_RANK[entry.impact] >= IMPACT_RANK[target.reasonImpact || "low"]) { target.reason = entry.reason; target.reasonImpact = entry.impact; }
         } else {
           finalNewEntries.push(entry);
         }
@@ -939,7 +933,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
         const mergedUpdates = [...(current.updates || [])];
         const mergedFacts = cleanFacts(g.facts);
         if (mergedNote || mergedFacts.length) {
-          mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, ...(mergedFacts.length ? { facts: mergedFacts } : {}), ...(g.reason ? { reason: g.reason, matter: g.matter || "" } : {}), run_at: runAtIso });
+          mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, ...(mergedFacts.length ? { facts: mergedFacts } : {}), ...(g.reason ? { reason: g.reason } : {}), run_at: runAtIso });
         }
 
         const { error: updErr } = await sb
@@ -977,7 +971,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
             targets,
             why: e.note,
             sources,
-            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", ...(e.facts.length ? { facts: e.facts } : {}), ...(e.reason ? { reason: e.reason, matter: e.matter || "" } : {}), run_at: runAtIso }],
+            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", ...(e.facts.length ? { facts: e.facts } : {}), ...(e.reason ? { reason: e.reason } : {}), run_at: runAtIso }],
             created_at: createdAt.toISOString(),
             updated_at: createdAt.toISOString(),
           };
@@ -1083,11 +1077,10 @@ const RESCORE_TOOL = {
             index: { type: "integer", description: "[카드] 목록의 번호" },
             impact: { type: "string", enum: ["high", "medium", "low"] },
             impact_reason: { type: "string", description: "왜 이 중요도인지 10자 안팎 한마디(예: \"전망치 변경\", \"판도 이벤트\", \"새 의견+숫자\", \"실적·추정치 변경\", \"가격·수급 변화\", \"새 의견(숫자 없음)\", \"개별 회사 소식\", \"반복\", \"잡담\", \"시황 중계\", \"홍보\")" },
-            why_it_matters: { type: "string", description: "왜 중요한지 한 문장(2026-11-28 추가 — 화면 맨 위 '지금 중요한 것'에 그대로 보임). impact가 high 또는 medium이면: 이 소식 때문에 '어느 산업·회사의 무엇(전망·숫자·판도)이 어떻게 달라지는지'를 원문 숫자를 넣어 한 문장으로. 제목을 되풀이하지 말고 '그래서 뭐가 바뀌나'를 쓸 것. 예: \"HBM 가격 전망이 +10%에서 +25%로 올라가 메모리 3사 2027년 이익 추정치 상향 요인\". low면 빈 문자열" },
             note: { type: "string", description: "무슨 내용인지 1~3문장. 한글로 작성(한자 금지), 숫자는 아라비아 숫자, 영어 이름·단위는 원문 표기 그대로" },
             facts: { type: "array", items: { type: "string" }, description: "원문에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부. 표기는 원문 그대로. 없으면 빈 배열" },
           },
-          required: ["index", "impact", "impact_reason", "why_it_matters", "note", "facts"],
+          required: ["index", "impact", "impact_reason", "note", "facts"],
         },
       },
     },
@@ -1109,11 +1102,7 @@ async function rescoreOldClusters(sb, apiKey) {
     if (dErr) throw dErr;
     c.impact = "medium";
   }
-  // 다시 볼 카드: 새 기준으로 본 적 없는 카드 + "높음·중간"인데 "왜 중요한지" 문장(matter)을 아직 안 받은 카드
-  const seenNew = c => (c.updates || []).some(u => u && u.reason);
-  const askedMatter = c => (c.updates || []).some(u => u && typeof u.matter === "string");
-  const pending = (rows || []).filter(c => !seenNew(c) || (c.impact !== "low" && !askedMatter(c)))
-    .sort((a, b) => IMPACT_RANK[b.impact] - IMPACT_RANK[a.impact]).slice(0, RESCORE_BATCH);
+  const pending = (rows || []).filter(c => !(c.updates || []).some(u => u && u.reason)).slice(0, RESCORE_BATCH);
   if (!pending.length) return 0;
 
   // 카드마다 최근 원문 몇 개를 같이 보여줌(옛 "낮음" 카드는 설명이 아예 없어서 원문이 있어야 판단할 수 있음)
@@ -1133,7 +1122,7 @@ async function rescoreOldClusters(sb, apiKey) {
   }).join("\n\n");
 
   const prompt = `당신은 증권사 애널리스트를 돕는 리서치 어시스턴트입니다. 아래 [카드]는 텔레그램 글을 이미 묶어서 정리해 둔 것입니다.
-카드마다 원문을 다시 읽고 중요도(impact)·이유(impact_reason)·왜 중요한지(why_it_matters)·설명(note)·숫자 목록(facts)을 새로 매겨서 rescore_cards 도구로 반환하세요.
+카드마다 원문을 다시 읽고 중요도(impact)·이유(impact_reason)·설명(note)·숫자 목록(facts)을 새로 매겨서 rescore_cards 도구로 반환하세요.
 카드 ${pending.length}개 전부를 빠짐없이 반환할 것.
 
 [impact 규칙]
@@ -1163,8 +1152,7 @@ ${cardLines}`;
     if (impact === "high" && !facts.length) impact = "medium";
     const reason = r && typeof r.impact_reason === "string" && r.impact_reason.trim()
       ? r.impact_reason.replace(/\s+/g, " ").trim().slice(0, 30) : "다시 봄";
-    const matter = r && typeof r.why_it_matters === "string" && impact !== "low" ? r.why_it_matters.replace(/\s+/g, " ").trim().slice(0, 300) : "";
-    const updates = [...(c.updates || []), { at: c.updated_at, note, ...(facts.length ? { facts } : {}), reason, matter, run_at: runAtIso, rescored: true }];
+    const updates = [...(c.updates || []), { at: c.updated_at, note, ...(facts.length ? { facts } : {}), reason, run_at: runAtIso, rescored: true }];
     const { error: upErr } = await sb.from("clusters").update({ impact, why: note || c.why, updates }).eq("id", c.id);
     if (upErr) throw upErr;
     if (impact !== c.impact) changed++;
