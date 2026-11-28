@@ -79,8 +79,9 @@ import { createClient } from "@supabase/supabase-js";
 const FALLBACK_MODEL = "gemini-3.5-flash-lite";
 const MODEL_LIST_ID = 4;                       // status 테이블: 고른 모델 목록(JSON)과 고른 시각
 const MODEL_LIST_TTL_MS = 24 * 60 * 60 * 1000; // 하루에 한 번만 목록을 다시 받음
-const MODEL_COOLDOWN_MS = 10 * 60 * 1000;      // 404/429가 난 모델은 이 시간 동안 건너뜀(매번 다시 실패하며 시간 쓰지 않게)
-const modelCooldown = new Map();               // 모델 이름 → 다시 써 볼 시각
+const MODEL_COOLDOWN_MS = 60 * 60 * 1000;      // 안 되는 모델은 이 시간 동안 건너뜀(매번 다시 실패하며 시간 쓰지 않게)
+const GEMINI_LAST_TIMEOUT_MS = 150 * 1000;     // 마지막 후보 모델은 이만큼까지 기다림
+const GEMINI_TIMEOUT_MS = 45 * 1000;           // AI 응답을 이 시간 넘게 기다리지 않음(넘으면 그 모델은 안 되는 것으로 보고 다음 모델로)
 let lastModelUsed = "";
 
 // 모델 목록에서 쓸 후보를 순서대로 고름(시험하기 쉽게 따로 뺌)
@@ -97,19 +98,39 @@ export function pickModels(models) {
   return [...new Set([found.flash?.id, found.lite?.id, FALLBACK_MODEL].filter(Boolean))];
 }
 
+// 안 되는 모델 기억(2026-11-28): 새로 고른 flash 모델이 무료 등급에서 503만 내거나 응답이 몇 분씩 걸려서, 실행마다 그 모델부터
+// 다시 시도하다가 Vercel 300초 제한에 걸려 요약이 통째로 죽었음(잠금도 안 풀려서 1시간 넘게 새 카드가 안 만들어짐).
+// 지금은 실패한 모델과 "다시 써 볼 시각"을 status id 4 줄에 같이 적어 두고, 그 시각 전에는 어느 실행에서도 건너뜀.
+let modelBad = {}; // 모델 이름 → 다시 써 볼 시각(ISO)
+async function markModelBad(sb, model) {
+  modelBad[model] = new Date(Date.now() + MODEL_COOLDOWN_MS).toISOString();
+  try {
+    const { data: row } = await sb.from("status").select("last_note").eq("id", MODEL_LIST_ID).maybeSingle();
+    const saved = JSON.parse((row && row.last_note) || "{}");
+    const models = Array.isArray(saved) ? saved : (saved.models || []);
+    if (!models.length) return;
+    const { error } = await sb.from("status").update({ last_note: JSON.stringify({ models, bad: modelBad }) }).eq("id", MODEL_LIST_ID);
+    if (error) console.error("안 되는 모델 기록 실패(무시):", error.message);
+  } catch (err) { console.error("안 되는 모델 기록 실패(무시):", err.message); }
+}
 async function resolveModels(sb, apiKey) {
   try {
     const { data: row } = await sb.from("status").select("id, last_run_at, last_note").eq("id", MODEL_LIST_ID).maybeSingle();
     if (row && row.last_run_at && Date.now() - new Date(row.last_run_at).getTime() < MODEL_LIST_TTL_MS) {
-      const saved = JSON.parse(row.last_note || "[]");
-      if (Array.isArray(saved) && saved.length) return saved;
+      const saved = JSON.parse(row.last_note || "{}");
+      const models = Array.isArray(saved) ? saved : saved.models; // 옛 형식(배열)도 읽음
+      if (Array.isArray(models) && models.length) {
+        modelBad = (!Array.isArray(saved) && saved.bad) || {};
+        return models;
+      }
     }
     const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", { headers: { "x-goog-api-key": apiKey } });
     if (!res.ok) throw new Error(`모델 목록 ${res.status}`);
     const picked = pickModels((await res.json()).models);
     const { error } = await sb.from("status").upsert(
-      { id: MODEL_LIST_ID, last_run_at: new Date().toISOString(), last_note: JSON.stringify(picked) }, { onConflict: "id" });
+      { id: MODEL_LIST_ID, last_run_at: new Date().toISOString(), last_note: JSON.stringify({ models: picked, bad: {} }) }, { onConflict: "id" });
     if (error) console.error("모델 목록 저장 실패(무시):", error.message);
+    modelBad = {};
     return picked;
   } catch (err) {
     console.error("모델 목록 확인 실패 — 기본 모델로 진행:", err.message);
@@ -413,23 +434,24 @@ let modelDb = null;
 async function callGemini(apiKey, tool, prompt, maxTokens) {
   if (!modelCandidates) modelCandidates = await resolveModels(modelDb, apiKey);
   const now = Date.now();
-  const usable = modelCandidates.filter(m => !(modelCooldown.get(m) > now));
+  const usable = modelCandidates.filter(m => !(modelBad[m] && new Date(modelBad[m]).getTime() > now));
   const order = usable.length ? usable : [modelCandidates[modelCandidates.length - 1]];
   for (let i = 0; i < order.length; i++) {
     try {
-      const out = await callGeminiModel(order[i], apiKey, tool, prompt, maxTokens);
+      // 마지막 후보(믿고 쓰는 모델)는 넉넉히 기다리고, 그 앞의 새 모델은 짧게만 기다림
+      const out = await callGeminiModel(order[i], apiKey, tool, prompt, maxTokens, i === order.length - 1 ? GEMINI_LAST_TIMEOUT_MS : GEMINI_TIMEOUT_MS);
       lastModelUsed = order[i];
       return out;
     } catch (err) {
       // (2026-11-28) 503("지금 이 모델에 요청이 몰림")도 다음 모델로 넘김 — 새 flash 모델이 503만 계속 내서 배포 직후 요약이 통째로 멈췄었음
-      const skippable = [404, 429, 500, 502, 503, 504].includes(err.status);
+      const skippable = [404, 429, 500, 502, 503, 504, 599].includes(err.status); // 599 = 시간 초과·연결 실패(아래에서 붙임)
       if (!skippable || i === order.length - 1) throw err;
-      modelCooldown.set(order[i], Date.now() + MODEL_COOLDOWN_MS);
+      await markModelBad(modelDb, order[i]);
       console.error(`${order[i]} 사용 불가(${err.status}) — ${order[i + 1]}(으)로 넘어감`);
     }
   }
 }
-async function callGeminiModel(MODEL, apiKey, tool, prompt, maxTokens) {
+async function callGeminiModel(MODEL, apiKey, tool, prompt, maxTokens, timeoutMs) {
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     tools: [{ functionDeclarations: [{
@@ -440,7 +462,7 @@ async function callGeminiModel(MODEL, apiKey, tool, prompt, maxTokens) {
     toolConfig: { functionCallingConfig: { mode: "ANY", allowedFunctionNames: [tool.name] } },
     generationConfig: { maxOutputTokens: maxTokens },
   };
-  const waits = [3000, 8000];
+  const waits = [3000];
   for (let attempt = 0; ; attempt++) {
     let apiRes;
     try {
@@ -448,10 +470,14 @@ async function callGeminiModel(MODEL, apiKey, tool, prompt, maxTokens) {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      if (attempt < waits.length) { await new Promise(r => setTimeout(r, waits[attempt])); continue; }
-      throw new Error(`Gemini API 연결 실패: ${err.message}`);
+      const timedOut = err && (err.name === "TimeoutError" || err.name === "AbortError");
+      if (!timedOut && attempt < waits.length) { await new Promise(r => setTimeout(r, waits[attempt])); continue; }
+      const netErr = new Error(timedOut ? `Gemini API 응답 없음(${timeoutMs / 1000}초 초과, ${MODEL})` : `Gemini API 연결 실패: ${err.message}`);
+      netErr.status = 599;
+      throw netErr;
     }
     if (apiRes.ok) {
       const json = await apiRes.json();

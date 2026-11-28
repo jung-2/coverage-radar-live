@@ -217,7 +217,7 @@ test("모델 목록에서 가장 새 flash를 고르고, 하루 동안은 목록
   await press(false);
   assert.equal(new Set(modelsTried).size, 1);
   assert.equal(modelsTried[0], "gemini-4.0-flash", "미리보기·pro·요약 못 하는 모델은 안 고름");
-  assert.deepEqual(JSON.parse(db.DB.status.find(r => r.id === 4).last_note), ["gemini-4.0-flash", "gemini-4.0-flash-lite", "gemini-3.5-flash-lite"]);
+  assert.deepEqual(JSON.parse(db.DB.status.find(r => r.id === 4).last_note).models, ["gemini-4.0-flash", "gemini-4.0-flash-lite", "gemini-3.5-flash-lite"]);
   assert.match(db.DB.status.find(r => r.id === 3).last_note, /gemini-4\.0-flash$/);
 
   modelList = [gm("gemini-5.0-flash")]; // 새 모델이 나와도 하루가 지나기 전엔 그대로
@@ -240,6 +240,11 @@ test("고른 모델을 무료로 못 쓰면(404) 다음 모델로 넘어가서 �
   assert.equal(r.code, 200);
   assert.equal(clusterUrls().length, 1);
   assert.equal(modelsTried.at(-1), "gemini-7.0-flash-lite");
+  assert.ok(JSON.parse(db.DB.status.find(r => r.id === 4).last_note).bad["gemini-7.0-flash"], "안 되는 모델을 적어 둠");
+  modelsTried = [];
+  db.DB.items.push(tgItem(2, microIso(NOW - 30e3)));
+  await press(true);
+  assert.ok(!modelsTried.includes("gemini-7.0-flash"), "다음 실행에서는 안 되는 모델을 건너뜀");
 });
 
 // ── 2026-11-28 추가: 옛 기준으로 매긴 오늘 카드를 새 기준으로 다시 봄 ──
