@@ -1162,7 +1162,12 @@ function isRawTitle(c) {
   const h = String(c.headline || "").trim();
   if (!h) return true;
   if (/^https?:\/\//.test(h) || /…$/.test(h) || /&(quot|gt|lt|amp|#\d+);/.test(h)) return true;
-  return (c.sources || []).some(s => s && !s.detail && String(s.title || "").trim() === h);
+  // 원문 제목과 같거나, 원문 제목의 앞부분을 그대로 자른 것("…"만 뗀 것 포함)
+  return (c.sources || []).some(s => {
+    if (!s || s.detail) return false;
+    const t = String(s.title || "").replace(/…$/, "").trim();
+    return t.length >= 8 && (t === h || t.startsWith(h) || h.startsWith(t));
+  });
 }
 
 async function rescoreOldClusters(sb, apiKey) {
@@ -1215,7 +1220,7 @@ async function rescoreOldClusters(sb, apiKey) {
     const best = Math.max(...srcs.map(s => headlineSimilarity(c.headline, s.title)));
     if (best >= 0.2) continue;
     const latest = srcs.slice().sort((a, b) => (a.published_at < b.published_at ? 1 : -1))[0];
-    c.headline = String(latest.title).replace(/…$/, "").trim() || c.headline;
+    c.headline = String(latest.title).trim() || c.headline;
   }
   const rawIds = new Set(pending.filter(isRawTitle).map(c => c.id)); // 제목을 새로 지어야 하는 카드
   const cardLines = pending.map((c, i) => {
