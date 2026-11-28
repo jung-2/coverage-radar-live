@@ -269,3 +269,20 @@ test("이유가 안 붙은 오늘 카드는 원문과 함께 다시 보고 중�
   await press(true);
   assert.equal(rescorePrompts.length, 1, "한 번 본 카드는 다시 안 봄");
 });
+
+// ── 2026-11-28 추가: 모음 글에서 나온 카드는 다시 볼 때 그 카드 대목만 읽힘 ──
+test("모음 글 조각 카드를 다시 볼 때 글 전체가 아니라 카드 제목에 해당하는 대목만 보여줌", async () => {
+  const today = new Date(NOW + 9 * 3600e3).toISOString().slice(0, 10);
+  const at = new Date(NOW - 3600e3).toISOString();
+  db.DB.items.push(tgItem(1, microIso(NOW - 3 * 3600e3), { title: "글로벌 뉴스 브리핑…",
+    summary: "• 미 연방 금융당국이 유나이티드 피델리티 은행을 폐쇄함. • 버라이즌이 광대역 인터넷 사업을 위해 피디엄 인수를 추진함. 인수가는 $2 billion 수준. • 어도비가 블랙프라이데이 매출 전망을 발표함." }));
+  db.DB.clusters.push({ id: 701, day_key: today, headline: "버라이즌, 피디엄 인수 추진", impact: "medium", targets: ["버라이즌"], why: "",
+    sources: [{ title: "버라이즌, 광대역 인터넷 사업 위해 피디엄 인수 추진", url: "https://t.me/ch/0001", source: "텔레그램: ch", published_at: at }],
+    updates: [{ at, note: "새로 감지됨" }], updated_at: at });
+  db.DB.briefings.push({ id: 0, created_at: new Date(NOW - 60e3).toISOString(), period_to: microIso(NOW - 60e3) });
+  rescoreAnswer = [{ index: 1, headline: "버라이즌, 피디엄 인수 추진", impact: "medium", impact_reason: "개별 회사 소식", importance_score: 5, note: "버라이즌이 피디엄 인수를 추진함", facts: ["인수가 $2 billion 수준"] }];
+  await press(false);
+  const p = rescorePrompts[0];
+  assert.match(p, /피디엄 인수를 추진함/);
+  assert.ok(!p.includes("유나이티드 피델리티"), "같은 글의 다른 뉴스는 안 보여줌");
+});

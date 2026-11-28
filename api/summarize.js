@@ -316,7 +316,7 @@ function distinctDayKeys(items) {
 // 문체 규칙(2026-11-28 사용자: "옵시디언에 요청한 것처럼 말투·가독성을 올려 달라") — 리서치 볼트 CLAUDE.md의 문체 규칙을 옮김.
 // 새 글 정리와 옛 카드 다시 보기가 같이 씀. 이 규칙으로 쓴 설명에는 updates[].style = STYLE_VERSION을 붙여서,
 // 옛 말투("~했습니다")로 쓰인 오늘 카드를 rescoreOldClusters가 찾아 다시 쓰게 함. 규칙을 바꾸면 STYLE_VERSION을 올릴 것.
-const STYLE_VERSION = 2;
+const STYLE_VERSION = 3; // 3 (2026-11-28): 모음 글에서 나온 카드를 다시 볼 때 글 전체를 읽혀서 제목과 내용이 어긋났던 것을 고친 뒤 다시 쓰게 올림
 const STYLE_RULES = `- 말투는 개조식: 줄 끝을 "~함", "~임", "~됨", "~전망", "~예정", "~상향"처럼 끊을 것. "~했습니다", "~했다", "~입니다", "~이다" 금지
 - note의 첫 줄은 결론 한 줄(무슨 일이고 방향이 어느 쪽인지). 그다음 줄부터는 그 근거(숫자·사실)를 한 줄에 하나씩. 줄은 줄바꿈으로 나누고 전체 2~5줄(low는 결론 한 줄만)
 - 한 줄에 생각 하나, 숫자는 두 개까지. 줄끼리는 원인 → 결과 → 의미 순서로 놓고 필요하면 "그래서", "반면", "다만"으로 이을 것
@@ -564,7 +564,7 @@ async function splitTelegramDigests(items, { GEMINI_API_KEY }) {
       const pieces = (stories || []).filter(st => st && typeof st.headline === "string" && st.headline.trim());
       if (!pieces.length) { newItems.push(it); return; } // 쪼갠 결과가 비면 원본 그대로(글이 통째로 사라지지 않게)
       for (const st of pieces) {
-        newItems.push({ ...it, title: st.headline.trim(), summary: (st.detail || "").trim() });
+        newItems.push({ ...it, title: st.headline.trim(), summary: (st.detail || "").trim(), _piece: true });
       }
     });
     return newItems.length ? newItems : items;
@@ -948,7 +948,8 @@ ${STYLE_RULES}`;
       const now = new Date(); // published_at이 없는 예외적인 경우의 최후 fallback으로만 씀
       const toSource = (i) => {
         const it = items[i - 1];
-        return { title: it.title, url: it.url, source: it.source, published_at: it.published_at, category: it.category, run_at: runAtIso };
+        return { title: it.title, url: it.url, source: it.source, published_at: it.published_at, category: it.category, run_at: runAtIso,
+          ...(it._piece ? { detail: String(it.summary || "").slice(0, 800) } : {}) };
       };
 
       // 기존 클러스터 갱신 (LLM이 직접 매칭한 것 + 중복 방지 안전장치가 재배정한 것 전부 포함)
@@ -1129,6 +1130,31 @@ const RESCORE_TOOL = {
   },
 };
 
+// 카드에 보여줄 "원문" 고르기(2026-11-28 고침, 사용자: "카드 제목이랑 내용이 안 겹치는 게 너무 많다").
+// 원인: 뉴스 여러 개를 한 글에 모은 "모음 글"은 뉴스마다 카드를 따로 만드는데(같은 글 주소를 여러 카드가 나눠 가짐),
+// 카드를 다시 볼 때 그 글 "전체"를 읽혀서 AI가 카드 주제가 아니라 모음 글 전체를 요약해 버렸음
+// (제목은 "버라이즌 인수"인데 내용은 "글로벌 뉴스 브리핑임").
+// 지금은 ① 조각 내용(detail)이 카드에 저장돼 있으면 그것만 ② 없으면(옛 카드) 글에서 카드 제목과 가장 닮은 대목만 골라 보여줌.
+function sourceTextFor(src, item) {
+  const title = String(src.title || "").trim();
+  if (src.detail) return `${title}: ${src.detail}`;
+  if (!item) return title;
+  const isPiece = title && item.title && title !== item.title; // 글의 원래 제목과 다르면 모음 글에서 쪼갠 조각
+  if (!isPiece) return item.text;
+  const want = bigramSet(title);
+  const chunks = item.text.split(/(?<=[.!?。])\s+|\s+(?=[•▶■◆●✅📌🔹※]|>>|\d{1,2}[.)]\s)/u).filter(Boolean);
+  let best = -1, bestScore = 0;
+  chunks.forEach((ch, i) => {
+    const got = bigramSet(ch);
+    let hit = 0;
+    for (const g of want) if (got.has(g)) hit++;
+    const score = want.size ? hit / want.size : 0;
+    if (score > bestScore) { bestScore = score; best = i; }
+  });
+  if (best < 0 || bestScore < 0.2) return title; // 닮은 대목을 못 찾으면 제목만(엉뚱한 대목을 읽히느니)
+  return `${title}: ${chunks.slice(best, best + 3).join(" ")}`;
+}
+
 async function rescoreOldClusters(sb, apiKey) {
   const todayKey = kstDayKey(new Date());
   const { data: rows, error } = await sb.from("clusters")
@@ -1159,17 +1185,20 @@ async function rescoreOldClusters(sb, apiKey) {
   if (urls.length) {
     const { data: items, error: itErr } = await sb.from("items").select("url, title, summary").in("url", urls);
     if (itErr) throw itErr;
-    for (const it of items || []) textByUrl.set(it.url, String(it.summary || it.title || "").replace(/\s+/g, " ").trim());
+    for (const it of items || []) textByUrl.set(it.url, { title: String(it.title || ""), text: String(it.summary || it.title || "").replace(/\s+/g, " ").trim() });
   }
   const cardLines = pending.map((c, i) => {
-    const srcs = pick(c).map(s => `   원문: ${(textByUrl.get(s.url) || s.title || "").slice(0, RESCORE_SOURCE_CHARS)}`).join("\n");
-    const old = String(c.why || "").replace(/\s+/g, " ").slice(0, 300);
+    const srcs = pick(c).map(s => `   원문: ${sourceTextFor(s, textByUrl.get(s.url)).slice(0, RESCORE_SOURCE_CHARS)}`).join("\n");
+    // 기존 설명은 처음 정리할 때 쓴 것(다시 보기로 덮어쓴 것 말고) — 다시 보기가 틀렸더라도 그 틀린 내용을 물려받지 않게
+    const firstNote = (c.updates || []).find(u => u && !u.rescored && u.note && u.note !== "새로 감지됨");
+    const old = String((firstNote && firstNote.note) || "").replace(/\s+/g, " ").slice(0, 300);
     return `${i + 1}. 제목: ${c.headline}${old ? `\n   기존 설명: ${old}` : ""}\n${srcs}`;
   }).join("\n\n");
 
   const prompt = `당신은 증권사 애널리스트를 돕는 리서치 어시스턴트입니다. 아래 [카드]는 텔레그램 글을 이미 묶어서 정리해 둔 것입니다.
 카드마다 원문을 다시 읽고 중요도(impact)·점수(importance_score)·이유(impact_reason)·설명(note)·숫자 목록(facts)을 새로 매겨서 rescore_cards 도구로 반환하세요.
 카드 ${pending.length}개 전부를 빠짐없이 반환할 것.
+매우 중요: 카드마다 "제목"이 그 카드의 주제다. note·facts·headline은 반드시 그 제목의 주제에 대해서만 쓸 것. 원문에 다른 뉴스가 섞여 있어도 제목과 상관없는 내용은 전부 무시하고, 다른 주제로 바꿔 쓰지 말 것. "여러 뉴스를 모은 브리핑임" 같은 글 자체에 대한 설명은 금지.
 
 [impact 규칙]
 ${IMPACT_RULES}

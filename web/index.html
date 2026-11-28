@@ -594,8 +594,11 @@ function clusterView(c){
   const allUps = (Array.isArray(c.updates) ? c.updates : []).slice().sort((a,b)=> new Date(b.at) - new Date(a.at));
   // 새 문체(개조식, summarize.js STYLE_VERSION)로 쓴 설명이 하나라도 있으면 그것만 씀 — 옛 말투("~했습니다") 설명과 안 섞이게.
   // 다시 쓴 설명(rescored)은 그 카드 전체를 새로 정리한 것이라 맨 앞에 둠
-  const styled = allUps.filter(u=>u.style >= 2 && String(u.note || "").trim());
-  const ups = styled.length ? [...styled.filter(u=>u.rescored).slice(0, 1), ...styled.filter(u=>!u.rescored), ...allUps.filter(u=>!(u.style >= 2 && String(u.note || "").trim())).map(u=>({...u, note: "", facts: []}))] : allUps; // 옛 말투로 쓴 설명·숫자 목록은 안 섞음(중요도 이유·점수만 남김)
+  // 여러 번 다시 쓴 카드는 가장 새 규칙 번호(style)로 쓴 것만, 그중 "다시 쓴 것"은 가장 나중 것 하나만
+  const maxStyle = Math.max(0, ...allUps.filter(u=>String(u.note || "").trim()).map(u=>Number(u.style) || 0));
+  const styled = maxStyle >= 2 ? allUps.filter(u=>u.style === maxStyle && String(u.note || "").trim()) : [];
+  const lastRescored = styled.filter(u=>u.rescored).sort((a,b)=> String(b.run_at || "").localeCompare(String(a.run_at || ""))).slice(0, 1);
+  const ups = styled.length ? [...lastRescored, ...styled.filter(u=>!u.rescored), ...allUps.filter(u=>!styled.includes(u)).map(u=>({...u, note: "", facts: []}))] : allUps; // 옛 말투로 쓴 설명·숫자 목록은 안 섞음(중요도 이유·점수만 남김)
   const facts = [], seenF = new Set();
   const notes = [], seenN = new Set();
   for (const u of ups){
