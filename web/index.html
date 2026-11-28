@@ -83,7 +83,7 @@
   .sig-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;}
   .sig-badge{font-size:9px;padding:1px 6px;border-radius:8px;font-weight:700;color:#fff;letter-spacing:.02em;}
   .sig-target{font-size:10px;background:var(--pillbg);border-radius:10px;padding:2px 8px;color:var(--text);}
-  .sig-src{font-size:10px;color:var(--sub);margin-left:auto;white-space:nowrap;}
+  .sig-src{font-size:12px;font-weight:700;color:var(--text);margin-left:auto;white-space:nowrap;font-variant-numeric:tabular-nums;}
   .sig-title{font-size:12.5px;font-weight:500;}
   .sig-title a{text-decoration:none;}
   .sig-title a:hover{text-decoration:underline;}
@@ -199,6 +199,7 @@
   .hot-rows{columns:2 420px;column-gap:18px;}
   .hot-row{break-inside:avoid;}
   .hot-row:first-child{border-top:none;}
+  .hot-time{font-size:12px;font-weight:700;color:var(--text);}
   .hot-row .link-btn{font-size:13px;font-weight:700;color:inherit;margin:0;}  /* 제목은 굵게(사용자 요청) — 아래 설명과 구분 */
   .hot-key{font-weight:400;color:var(--sub);}
   .post{background:var(--block);border:1px solid var(--border);border-radius:8px;padding:10px 12px;cursor:pointer;}
@@ -633,7 +634,8 @@ function markSeen(){ try { localStorage.setItem("radar_last_seen", String(Date.n
 document.addEventListener("visibilitychange", ()=>{ if (document.visibilityState === "hidden") markSeen(); });
 window.addEventListener("pagehide", markSeen);
 function isNewSinceSeen(iso){ return lastSeenAt && new Date(iso).getTime() > lastSeenAt; }
-function newBadge(iso){ return isNewSinceSeen(iso) ? `<span class="new-badge">새</span>` : ""; }
+// (2026-11-28 사용자: "새" 표시보다 업데이트 시간이 더 중요) "새" 배지는 안 보여주고, 대신 업데이트 시각을 굵고 크게 보여줌
+function newBadge(iso){ return ""; }
 
 function hotListHtml(clusters){
   const hot = clusters.filter(c=>c.impact==="high")
@@ -655,7 +657,7 @@ function hotListHtml(clusters){
       + (why ? `<div class="hot-why">${noteInline(why)}</div>` : "")
       + `</div>`;
   }).join("");
-  return `<div class="hot-box"><div class="hot-title">지금 중요한 것 · 높음 ${hot.length}건${nNew ? ` (새로 ${nNew}건)` : ""}</div><div class="hot-rows">${rows}</div></div>`;
+  return `<div class="hot-box"><div class="hot-title">지금 중요한 것 · 높음 ${hot.length}건</div><div class="hot-rows">${rows}</div></div>`;
 }
 
 // ── "원문 전체" 보기 — 수집된 텔레그램 글을 하나도 안 빼고 그대로(최근순). 누르면 펼쳐짐 ──
