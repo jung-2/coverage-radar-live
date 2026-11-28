@@ -83,7 +83,9 @@
   .sig-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;}
   .sig-badge{font-size:9px;padding:1px 6px;border-radius:8px;font-weight:700;color:#fff;letter-spacing:.02em;}
   .sig-target{font-size:10px;background:var(--pillbg);border-radius:10px;padding:2px 8px;color:var(--text);}
-  .sig-src{font-size:10px;color:var(--sub);margin-left:auto;white-space:nowrap;}
+  /* (2026-11-28 사용자: 시간을 전체적으로 더 눈에 띄게) 시각은 어디서나 굵은 파란 글씨(바탕색은 사용자가 빼라고 함) */
+  .sig-src,.hot-time,.note-time,.post-time{font-size:12px;font-weight:700;color:var(--info);white-space:nowrap;font-variant-numeric:tabular-nums;}
+  .sig-src{margin-left:auto;}
   .sig-title{font-size:12.5px;font-weight:500;}
   .sig-title a{text-decoration:none;}
   .sig-title a:hover{text-decoration:underline;}
@@ -181,7 +183,7 @@
   .note li{margin-bottom:var(--gap);}
   .note li:last-child{margin-bottom:0;}
   .note-label{font-weight:700;}
-  .note-time{font-size:10.5px;font-weight:700;color:var(--sub);margin-bottom:4px;}
+  .note-time{display:inline-block;margin-bottom:5px;}
   .facts-label{font-size:10.5px;font-weight:700;color:var(--sub);margin-top:9px;}
   .impact-reason{font-size:10px;color:var(--sub);}
   .sig-subitem{padding:10px 12px;}
@@ -199,6 +201,7 @@
   .hot-rows{columns:2 420px;column-gap:18px;}
   .hot-row{break-inside:avoid;}
   .hot-row:first-child{border-top:none;}
+  .hot-time{margin-right:7px;}
   .hot-row .link-btn{font-size:13px;font-weight:700;color:inherit;margin:0;}  /* 제목은 굵게(사용자 요청) — 아래 설명과 구분 */
   .hot-key{font-weight:400;color:var(--sub);}
   .post{background:var(--block);border:1px solid var(--border);border-radius:8px;padding:10px 12px;cursor:pointer;}
@@ -430,8 +433,41 @@ function decodeEnt(s){
     return ENT[e.toLowerCase()] ?? m;
   });
 }
+// ── 외화 금액은 billion/million으로(2026-11-28 사용자 요청) ──
+// "3억 달러" → "$300 million", "48억 2천만 달러" → "$4.82 billion", "1,155.6억위안" → "CNY 115.56 billion".
+// AI에게 환산을 시키면 계산을 틀릴 수 있어서 화면에서 규칙으로 바꿈(카드 제목·설명·숫자 목록에만. 원문 글은 안 건드림).
+// 원화(억원/조원)는 그대로 둠. 100만 미만(예: "5만 달러")도 그대로 둠.
+const FX_UNIT = {"조":1e12, "억":1e8, "천만":1e7, "백만":1e6, "만":1e4};
+const FX_CUR = {"달러":["$",""], "유로":["€",""], "파운드":["£",""], "위안":["CNY ",""], "엔":["JPY ",""]};
+const FX_AMT = String.raw`\d[\d,]*(?:\.\d+)?\s?(?:조|억|천만|백만|만)(?:\s?\d[\d,]*(?:\.\d+)?\s?(?:억|천만|백만|만))?`;
+const FX_RE = new RegExp(String.raw`(?:(${FX_AMT}|\d[\d,]*(?:\.\d+)?)\s?[~\-–]\s?)?(${FX_AMT})\s?(달러|유로|파운드|위안|엔)`, "g");
+function fxValue(s, fallbackUnit){
+  let total = 0, any = false;
+  for (const m of String(s).matchAll(/(\d[\d,]*(?:\.\d+)?)\s?(조|억|천만|백만|만)/g)){ total += parseFloat(m[1].replace(/,/g, "")) * FX_UNIT[m[2]]; any = true; }
+  if (!any) total = parseFloat(String(s).replace(/,/g, "")) * (fallbackUnit || 1); // "2~3억 달러"의 앞 숫자는 뒤 숫자의 단위를 따름
+  return total;
+}
+function fxWord(v){
+  const [div, word] = v >= 1e12 ? [1e12, "trillion"] : v >= 1e9 ? [1e9, "billion"] : [1e6, "million"];
+  return {num: String(Math.round(v / div * 100) / 100), word};
+}
+function fxUnits(text){
+  return String(text ?? "").replace(FX_RE, (all, lo, hi, cur) => {
+    const hiV = fxValue(hi);
+    if (!(hiV >= 1e6)) return all;
+    const [pre] = FX_CUR[cur];
+    const h = fxWord(hiV);
+    if (lo === undefined) return `${pre}${h.num} ${h.word}`;
+    const firstUnit = FX_UNIT[(hi.match(/조|억|천만|백만|만/) || [])[0]];
+    const loV = fxValue(lo, firstUnit);
+    if (!(loV >= 1e6)) return all;
+    const l = fxWord(loV);
+    return l.word === h.word ? `${pre}${l.num}~${h.num} ${h.word}` : `${pre}${l.num} ${l.word}~${pre}${h.num} ${h.word}`;
+  });
+}
+
 // 금액·비율처럼 "값"인 숫자만 굵게(연도·날짜는 그대로 둠). 글자는 전부 안전하게 바꿔서 넣음.
-const NUM_RE = /[+\-−±]?[$₩€¥]\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:bn|mn|tn|조|억|만))?|[+\-−±]?\d[\d,]*(?:\.\d+)?\s?(?:%p|%|bp|조|억|만|원|달러|위안|엔|유로|배|GW|MW|kWh|kW|nm|나노|톤|bn|mn)(?:\s?\d[\d,]*\s?(?:억|만|천))*(?:\s?(?:원|달러|위안|엔|유로))?/g;
+const NUM_RE = /[+\-−±]?(?:[$₩€¥£]|CNY |JPY )\s?\d[\d,]*(?:\.\d+)?(?:~\d[\d,]*(?:\.\d+)?)?(?:\s?(?:trillion|billion|million|bn|mn|tn|조|억|만))?|[+\-−±]?\d[\d,]*(?:\.\d+)?\s?(?:%p|%|bp|조|억|만|원|달러|위안|엔|유로|배|GW|MW|kWh|kW|nm|나노|톤|bn|mn)(?:\s?\d[\d,]*\s?(?:억|만|천))*(?:\s?(?:원|달러|위안|엔|유로))?/g;
 function hl(raw){
   const s = decodeEnt(raw);
   let out = "", last = 0;
@@ -505,6 +541,8 @@ const clusterByUrl = new Map();
 let channelHandles = [];
 
 // 카드 하나(=사건 하나)를 화면에 그리기 좋게 정리: 숫자·사실 목록(최근 것부터, 겹치는 줄 뺌), 설명 이력, 원문 목록
+// 카드 제목(외화 금액은 billion/million으로)
+function headText(c){ return fxUnits(decodeEnt(c.headline)); }
 function clusterView(c){
   const stamp = `${c.updated_at}|${(c.updates||[]).length}|${(c.sources||[]).length}`;
   if (c._v && c._v.stamp === stamp) return c._v;
@@ -514,19 +552,19 @@ function clusterView(c){
   for (const u of ups){
     for (const f of (Array.isArray(u.facts) ? u.facts : [])){
       const k = String(f).replace(/\s/g, "");
-      if (k && !seenF.has(k)){ seenF.add(k); facts.push(String(f)); }
+      if (k && !seenF.has(k)){ seenF.add(k); facts.push(fxUnits(decodeEnt(String(f)))); }
     }
     const n = String(u.note || "").replace(/\\n/g, "\n").trim(); // AI가 줄바꿈을 글자 그대로 "\n"으로 써 놓은 경우가 있음
-    if (n && n !== "새로 감지됨" && !seenN.has(n)){ seenN.add(n); notes.push({at: u.at, note: n}); }
+    if (n && n !== "새로 감지됨" && !seenN.has(n)){ seenN.add(n); notes.push({at: u.at, note: fxUnits(decodeEnt(n))}); }
   }
-  if (!notes.length && c.why) notes.push({at: c.updated_at, note: String(c.why)});
+  if (!notes.length && c.why) notes.push({at: c.updated_at, note: fxUnits(decodeEnt(String(c.why)))});
   const sources = [], seenU = new Set();
   for (const s of (Array.isArray(c.sources) ? c.sources : [])){
     if (!s || !s.url || seenU.has(s.url)) continue;
     seenU.add(s.url); sources.push(s);
   }
   sources.sort((a,b)=> new Date(b.published_at) - new Date(a.published_at));
-  const hay = [c.headline, ...(c.targets||[]), ...notes.map(n=>n.note), ...facts].join(" ").toLowerCase();
+  const hay = [c.headline, headText(c), ...(c.targets||[]), ...notes.map(n=>n.note), ...facts].join(" ").toLowerCase();
   const reason = String((ups.find(u=>u.reason) || {}).reason || "");
   c._v = {stamp, facts, notes, sources, hay, reason};
   return c._v;
@@ -581,7 +619,7 @@ function eventHtml(c, groupKey){
   return `
     <div class="sig-subitem">
       <div class="sig-subitem-top">${impactBadge(c.impact, true)}${v.reason ? `<span class="impact-reason">${esc(v.reason)}</span>` : ""}${chips}<span class="sig-src">${kstTimeLabel(c.updated_at)}</span></div>
-      <div class="sig-subitem-title">${newBadge(c.updated_at)}${esc(decodeEnt(c.headline))}</div>
+      <div class="sig-subitem-title">${newBadge(c.updated_at)}${esc(headText(c))}</div>
       ${body}
       <button class="link-btn" data-open="${esc(c.id)}">원문 ${v.sources.length}건${more} 보기 ›</button>
     </div>`;
@@ -595,17 +633,36 @@ function groupHtml(g){
     <div class="sig-group${best === "low" ? " low-only" : ""}">
       <div class="sig-group-top">
         ${impactBadge(best)}
-        <span class="sig-group-title">${esc(g.key)}</span>
+        <span class="sig-group-title">${esc(groupLabel(g.key))}</span>
         ${g.items.length > 1 ? `<span class="sig-group-count">${g.items.length}건</span>` : ""}
         <span class="sig-src">최근 ${kstTimeLabel(latestIso)}</span>
       </div>
-      <div class="sig-group-items">${g.items.map(c=>eventHtml(c, g.key)).join("")}</div>
+      <div class="sig-group-items">${g.items.map(c=>eventHtml(c, groupLabel(g.key))).join("")}</div>
     </div>`;
 }
+// 어느 카드로 묶을지(2026-11-28 고침, 사용자: "AI인프라에 앤스로픽·시추에이셔널 어웨어니스까지 다 묶여 있다").
+// 예전엔 AI가 붙인 첫 번째 태그로만 묶어서, AI가 "AI인프라"를 맨 앞에 붙인 서로 다른 사건이 한 카드에 다 들어갔음.
+// 지금은 제목이 태그 중 하나(회사·기관 이름)로 시작하면 그 이름으로 묶음 — "앤스로픽 2027년 …"은 앤스로픽 카드로.
+// 그게 아니면 첫 번째 태그로 묶되, 첫 번째 태그가 "AI인프라"·"인공지능"·"반도체"·"주식시장"처럼 너무 넓은 말이면
+// 묶지 않고 사건마다 따로 카드로 보여줌(넓은 말 하나에 관련 없는 사건이 몰리는 걸 막음). 넓은 말 목록은 아래 BROAD_KEYS.
+const BROAD_KEYS = new Set(["ai", "인공지능", "ai인프라", "ai산업", "ai서버", "반도체", "메모리", "메모리반도체", "주식시장", "미국주식시장",
+  "글로벌주식시장", "국내증시", "증시", "시황", "매크로", "거시경제", "경제", "기타", "기타소식", "텔레그램", "투자심리"]);
+const keyNorm = s => String(s).replace(/[^0-9A-Za-z가-힣]/g, "").toLowerCase();
+function groupKeyOf(c){
+  const targets = (c.targets || []).map(String).filter(Boolean);
+  const specific = targets.filter(t => !BROAD_KEYS.has(keyNorm(t)));
+  const head = keyNorm(headText(c));
+  let best = "";
+  for (const t of specific){ const n = keyNorm(t); if (n.length >= 2 && head.startsWith(n) && n.length > keyNorm(best).length) best = t; }
+  if (best) return best;
+  if (targets[0] && !BROAD_KEYS.has(keyNorm(targets[0]))) return targets[0];
+  return (specific[0] || targets[0] || "기타") + "¦" + c.id; // 혼자 쓰는 카드(이름 뒤에 카드 번호를 붙여서 안 묶이게)
+}
+function groupLabel(key){ return String(key).split("¦")[0]; }
 function groupClusters(clusters){
   const map = new Map();
   for (const c of clusters){
-    const key = (c.targets && c.targets[0]) ? String(c.targets[0]) : "기타";
+    const key = groupKeyOf(c);
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(c);
   }
@@ -633,7 +690,8 @@ function markSeen(){ try { localStorage.setItem("radar_last_seen", String(Date.n
 document.addEventListener("visibilitychange", ()=>{ if (document.visibilityState === "hidden") markSeen(); });
 window.addEventListener("pagehide", markSeen);
 function isNewSinceSeen(iso){ return lastSeenAt && new Date(iso).getTime() > lastSeenAt; }
-function newBadge(iso){ return isNewSinceSeen(iso) ? `<span class="new-badge">새</span>` : ""; }
+// (2026-11-28 사용자: "새" 표시보다 업데이트 시간이 더 중요) "새" 배지는 안 보여주고, 대신 업데이트 시각을 굵고 크게 보여줌
+function newBadge(iso){ return ""; }
 
 function hotListHtml(clusters){
   const hot = clusters.filter(c=>c.impact==="high")
@@ -642,20 +700,20 @@ function hotListHtml(clusters){
   const nNew = hot.filter(c=>isNewSinceSeen(c.updated_at)).length;
   const rows = hot.map(c=>{
     const v = clusterView(c);
-    const key = (c.targets && c.targets[0]) || "기타";
+    const key = groupLabel(groupKeyOf(c));
     // 설명 첫 줄만(리포트형은 "[BEAT]" 한 줄 뒤에 숫자가 오니까 그땐 다음 줄까지 붙임) — 전체는 눌러서 옆 패널에서
     const lines = String(v.notes[0]?.note || "").split("\n").map(l=>l.trim()).filter(Boolean);
     let firstLine = lines[0] || "";
     if (/^\[(BEAT|MISS|혼조|IN-LINE)\]$/.test(firstLine) && lines[1]) firstLine += " " + lines[1];
     const why = firstLine.length > 160 ? firstLine.slice(0, 160) + "…" : firstLine;
-    const headline = decodeEnt(c.headline);
+    const headline = headText(c);
     const keyHtml = headline.startsWith(key) ? "" : `<span class="hot-key">${esc(key)}</span>`;
     return `<div class="hot-row">${newBadge(c.updated_at)}<span class="hot-time">${kstTimeLabel(c.updated_at)}</span>${keyHtml}`
       + `<button class="link-btn" data-open="${esc(c.id)}">${esc(headline)}</button>`
       + (why ? `<div class="hot-why">${noteInline(why)}</div>` : "")
       + `</div>`;
   }).join("");
-  return `<div class="hot-box"><div class="hot-title">지금 중요한 것 · 높음 ${hot.length}건${nNew ? ` (새로 ${nNew}건)` : ""}</div><div class="hot-rows">${rows}</div></div>`;
+  return `<div class="hot-box"><div class="hot-title">지금 중요한 것 · 높음 ${hot.length}건</div><div class="hot-rows">${rows}</div></div>`;
 }
 
 // ── "원문 전체" 보기 — 수집된 텔레그램 글을 하나도 안 빼고 그대로(최근순). 누르면 펼쳐짐 ──
@@ -664,10 +722,10 @@ function postHtml(it, inDrawer){
   const badge = c ? impactBadge(c.impact, true)
     : `<span class="sig-badge sig-badge-sm" style="background:var(--info)" title="아직 AI 정리 전 — 5분 안에 자동으로 정리됨">정리 대기</span>`;
   const ch = String(it.source || "").replace(TG_PREFIX, "");
-  const into = c && !inDrawer ? `<button class="link-btn" data-open="${esc(c.id)}" title="이 글이 들어간 카드 열기">→ ${esc(decodeEnt(c.headline))}</button>` : "";
+  const into = c && !inDrawer ? `<button class="link-btn" data-open="${esc(c.id)}" title="이 글이 들어간 카드 열기">→ ${esc(headText(c))}</button>` : "";
   return `
     <div class="post${openPosts.has(it.url) ? " open" : ""}" data-post="${esc(it.url)}">
-      <div class="post-top">${inDrawer ? "" : badge}<span class="post-ch">${esc(ch)}</span><span>${inDrawer ? kstFullLabel(it.published_at) : kstTimeLabel(it.published_at)}</span>
+      <div class="post-top">${inDrawer ? "" : badge}<span class="post-ch">${esc(ch)}</span><span class="post-time">${inDrawer ? kstFullLabel(it.published_at) : kstTimeLabel(it.published_at)}</span>
         <a href="${safeUrl(it.url)}" target="_blank" rel="noopener">텔레그램에서 열기 ↗</a></div>
       <div class="post-text">${hl(postText(it.summary || it.title || ""))}</div>
       ${into}
@@ -697,8 +755,8 @@ async function openDrawer(id){
     ? `<h3>설명 이력 ${v.notes.length}건 (최근 것부터)</h3>` + v.notes.map(n=>`<div class="sig-why old-note"><div class="note-time">${kstTimeLabel(n.at)} 설명</div>${noteHtml(n.note)}</div>`).join("")
     : "";
   const head = `<button class="drawer-close" id="drawer-close">닫기 ✕</button>
-    <div class="sig-top" style="margin-bottom:6px">${impactBadge(c.impact)}${v.reason ? `<span class="impact-reason">${esc(v.reason)}</span>` : ""}<span class="sig-source-meta">마지막 업데이트 ${kstFullLabel(c.updated_at)}</span></div>
-    <h2>${esc(decodeEnt(c.headline))}</h2>
+    <div class="sig-top" style="margin-bottom:6px">${impactBadge(c.impact)}${v.reason ? `<span class="impact-reason">${esc(v.reason)}</span>` : ""}<span class="post-time">마지막 업데이트 ${kstFullLabel(c.updated_at)}</span></div>
+    <h2>${esc(headText(c))}</h2>
     <div class="sig-top">${targets}</div>
     ${factsHtml}${notesHtml}
     <h3>원문 ${v.sources.length}건 (최근 것부터)</h3>`;
