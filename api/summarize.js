@@ -313,6 +313,19 @@ function distinctDayKeys(items) {
   return Array.from(set);
 }
 
+// 문체 규칙(2026-11-28 사용자: "옵시디언에 요청한 것처럼 말투·가독성을 올려 달라") — 리서치 볼트 CLAUDE.md의 문체 규칙을 옮김.
+// 새 글 정리와 옛 카드 다시 보기가 같이 씀. 이 규칙으로 쓴 설명에는 updates[].style = STYLE_VERSION을 붙여서,
+// 옛 말투("~했습니다")로 쓰인 오늘 카드를 rescoreOldClusters가 찾아 다시 쓰게 함. 규칙을 바꾸면 STYLE_VERSION을 올릴 것.
+const STYLE_VERSION = 2;
+const STYLE_RULES = `- 말투는 개조식: 줄 끝을 "~함", "~임", "~됨", "~전망", "~예정", "~상향"처럼 끊을 것. "~했습니다", "~했다", "~입니다", "~이다" 금지
+- note의 첫 줄은 결론 한 줄(무슨 일이고 방향이 어느 쪽인지). 그다음 줄부터는 그 근거(숫자·사실)를 한 줄에 하나씩. 줄은 줄바꿈으로 나누고 전체 2~5줄(low는 결론 한 줄만)
+- 한 줄에 생각 하나, 숫자는 두 개까지. 줄끼리는 원인 → 결과 → 의미 순서로 놓고 필요하면 "그래서", "반면", "다만"으로 이을 것
+- 원문이 앞으로 확인할 일정·조건을 말했으면 마지막 줄을 "확인: ..."으로 쓸 것. 원문에 없으면 쓰지 말 것
+- "~라고 밝혔다", "~에 따르면", "~로 알려졌다", "주목된다" 같은 전달·메타 표현과 번역투 금지. 주어와 숫자를 바로 쓸 것
+- 회사 이름: 한국 기업만 한글(삼성전자, SK하이닉스), 그 밖의 기업은 영어 공식 표기(TSMC, Nvidia, Anthropic, Micron, Apple). "티에스엠씨"·"테이 에스 엠 씨"·"엔비디아"·"앤스로픽"처럼 한글로 옮기지 말 것
+- 한자·중국어 글자는 한 글자도 쓰지 말 것. 숫자는 아라비아 숫자, 단위는 원문 표기 그대로("%"를 "퍼센트"로 쓰지 말 것)
+- headline도 같은 말투로 짧게: "주어 + 무슨 일 + 핵심 숫자"(예: "TSMC 11월 매출 +32% YoY, 컨센서스 상회"). "~동향", "~점검", "~분석", "~전망 제시" 같은 뭉뚱그린 끝말 금지`;
+
 // 중요도 기준 — 새 글 정리(아래 프롬프트)와 옛 카드 다시 보기(rescoreOldClusters)가 같이 씀. 기준을 바꾸려면 여기만 고치면 됨
 const IMPACT_RULES = `(2026-11-28 사용자가 직접 정한 기준 — 핵심은 "숫자가 바뀌는 것"이 중요하다는 것. 특정 회사 목록이 아니라 산업(섹터) 전체 관점에서 판단할 것)
 - high: 아래 중 하나에 해당하고, 원문에 그걸 보여주는 구체적 숫자나 사실이 있을 때
@@ -789,7 +802,10 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
 - 원문에 없는 숫자를 만들거나 계산해서 넣지 말 것. 숫자도 구체적 사실도 없는 잡담·감상이면 빈 배열
 
 [잡동사니 통 금지]
-- 서로 관련 없는 글을 "기타 소식 모음"·"기타 뉴스"·"잡담 모음" 같은 통 하나에 몰아넣지 말 것. 관련 없는 글은 각각 따로 update를 만들고 impact를 low로 둘 것`;
+- 서로 관련 없는 글을 "기타 소식 모음"·"기타 뉴스"·"잡담 모음" 같은 통 하나에 몰아넣지 말 것. 관련 없는 글은 각각 따로 update를 만들고 impact를 low로 둘 것
+
+[문체 규칙 — headline·note·facts 전부에 적용. 위 note 형식과 부딪히면 이 규칙이 우선(유형 C의 "자연스러운 문장 2~3문장"도 아래 개조식 줄로 쓸 것)]
+${STYLE_RULES}`;
 
         const { args, finishReason } = await callGemini(GEMINI_API_KEY, UPDATE_TOOL, prompt, MAX_TOKENS);
 
@@ -956,7 +972,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
         const mergedUpdates = [...(current.updates || [])];
         const mergedFacts = cleanFacts(g.facts);
         if (mergedNote || mergedFacts.length) {
-          mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, ...(mergedFacts.length ? { facts: mergedFacts } : {}), ...(g.reason ? { reason: g.reason } : {}), ...(g.score ? { score: g.score } : {}), run_at: runAtIso });
+          mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, ...(mergedFacts.length ? { facts: mergedFacts } : {}), ...(g.reason ? { reason: g.reason } : {}), ...(g.score ? { score: g.score } : {}), style: STYLE_VERSION, run_at: runAtIso });
         }
 
         const { error: updErr } = await sb
@@ -994,7 +1010,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
             targets,
             why: e.note,
             sources,
-            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", ...(e.facts.length ? { facts: e.facts } : {}), ...(e.reason ? { reason: e.reason } : {}), ...(e.score ? { score: e.score } : {}), run_at: runAtIso }],
+            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", ...(e.facts.length ? { facts: e.facts } : {}), ...(e.reason ? { reason: e.reason } : {}), ...(e.score ? { score: e.score } : {}), style: STYLE_VERSION, run_at: runAtIso }],
             created_at: createdAt.toISOString(),
             updated_at: createdAt.toISOString(),
           };
@@ -1098,13 +1114,14 @@ const RESCORE_TOOL = {
           type: "object",
           properties: {
             index: { type: "integer", description: "[카드] 목록의 번호" },
+            headline: { type: "string", description: "카드 제목을 문체 규칙대로 다시 쓴 것. 내용(주체·사건)은 바꾸지 말고 표기와 말투만 고칠 것" },
             impact: { type: "string", enum: ["high", "medium", "low"] },
             impact_reason: { type: "string", description: "왜 이 중요도인지 10자 안팎 한마디(예: \"전망치 변경\", \"판도 이벤트\", \"새 의견+숫자\", \"실적·추정치 변경\", \"가격·수급 변화\", \"새 의견(숫자 없음)\", \"개별 회사 소식\", \"반복\", \"잡담\", \"시황 중계\", \"홍보\")" },
             importance_score: { type: "integer", description: "중요도 점수 1~10(정수). 화면 맨 위 '지금 중요한 것'은 이 점수가 높은 순으로 몇 개만 보여주므로 엄격하게 매길 것 — 하루에 9~10점은 많아야 한두 건. 10~9: 산업 전체의 전망치·판도가 실제로 바뀌는 일이고 원문에 그걸 보여주는 구체적 숫자가 있음(시장 전망치 대폭 상향·하향, 대형 규제·관세, 업계 대표 회사의 실적 충격, 수급을 바꾸는 대형 계약·증설). 8: 숫자로 뒷받침된 새로운 의견이거나 한 산업에 뚜렷한 영향을 주는 이벤트. 7~6: 새 정보지만 파급이 한 회사에 그치거나 숫자 근거가 약함. 5~4: 이미 알려진 흐름의 재확인. 3~1: 반복·시황 중계·잡담·홍보. 숫자나 구체적 사실이 없으면 6점을 넘기지 말 것" },
             note: { type: "string", description: "무슨 내용인지 1~3문장. 한글로 작성(한자 금지), 숫자는 아라비아 숫자, 영어 이름·단위는 원문 표기 그대로" },
             facts: { type: "array", items: { type: "string" }, description: "원문에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부. 표기는 원문 그대로. 없으면 빈 배열" },
           },
-          required: ["index", "impact", "impact_reason", "importance_score", "note", "facts"],
+          required: ["index", "headline", "impact", "impact_reason", "importance_score", "note", "facts"],
         },
       },
     },
@@ -1129,7 +1146,8 @@ async function rescoreOldClusters(sb, apiKey) {
   // 다시 볼 카드: 새 기준으로 본 적 없는 카드 + 아직 점수(score)를 한 번도 안 받은 카드. 중요도 높은 것부터
   const seenNew = c => (c.updates || []).some(u => u && u.reason);
   const hasScore = c => (c.updates || []).some(u => u && typeof u.score === "number");
-  const pending = (rows || []).filter(c => !seenNew(c) || !hasScore(c))
+  const newStyle = c => (c.updates || []).some(u => u && u.style === STYLE_VERSION); // 새 문체 규칙으로 쓴 적 있는 카드
+  const pending = (rows || []).filter(c => !seenNew(c) || !hasScore(c) || !newStyle(c))
     .sort((a, b) => IMPACT_RANK[b.impact] - IMPACT_RANK[a.impact]).slice(0, RESCORE_BATCH);
   if (!pending.length) return 0;
 
@@ -1157,9 +1175,13 @@ async function rescoreOldClusters(sb, apiKey) {
 ${IMPACT_RULES}
 
 [글쓰기 규칙]
-- note: 무슨 내용인지 1~3문장으로. 원문에 없는 내용을 지어내지 말 것
+- note: 무슨 내용인지. 원문에 없는 내용을 지어내지 말 것. 쓰는 법은 아래 문체 규칙
+- headline: 지금 제목을 문체 규칙대로 다시 쓸 것(주체와 사건은 그대로)
 - facts: 원문에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부, "무엇이 얼마"인지 알 수 있게 주어와 함께. 원문에 없는 숫자를 만들거나 계산하지 말 것. 숫자도 구체적 사실도 없으면 빈 배열
-- 한글로 작성하고 한자·중국어 글자는 한 글자도 쓰지 말 것(원문이 중국어면 한국어로 옮길 것). 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로("%"를 "퍼센트"로, "AI5"를 "에이아이오분"으로 풀어 쓰지 말 것)
+- 원문이 중국어·영어면 한국어로 옮길 것. 영어 제품명·단위는 원문 표기 그대로("AI5"를 "에이아이오분"으로 풀어 쓰지 말 것)
+
+[문체 규칙 — headline·note·facts 전부에 적용]
+${STYLE_RULES}
 
 [카드]
 ${cardLines}`;
@@ -1182,8 +1204,10 @@ ${cardLines}`;
       ? r.impact_reason.replace(/\s+/g, " ").trim().slice(0, 30) : "다시 봄";
     const hadFacts = facts.length || (c.updates || []).some(u => u && Array.isArray(u.facts) && u.facts.length);
     const score = cleanScore(r && r.importance_score, impact, hadFacts ? 1 : 0);
-    const updates = [...(c.updates || []), { at: c.updated_at, note, ...(facts.length ? { facts } : {}), reason, score, run_at: runAtIso, rescored: true }];
-    const { error: upErr } = await sb.from("clusters").update({ impact, why: note || c.why, updates }).eq("id", c.id);
+    const updates = [...(c.updates || []), { at: c.updated_at, note, ...(facts.length ? { facts } : {}), reason, score, style: STYLE_VERSION, run_at: runAtIso, rescored: true }];
+    const newHead = r && typeof r.headline === "string" ? r.headline.replace(/\s+/g, " ").trim() : "";
+    const headline = newHead.length >= 4 && newHead.length <= 120 && !isJunkBucket(newHead) ? newHead : c.headline;
+    const { error: upErr } = await sb.from("clusters").update({ impact, headline, why: note || c.why, updates }).eq("id", c.id);
     if (upErr) throw upErr;
     if (impact !== c.impact) changed++;
   }

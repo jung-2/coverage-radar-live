@@ -179,7 +179,13 @@
   .hero{--gap:.65em;}
   .sig-why{font-size:12.5px;color:var(--text);line-height:1.6;margin-top:6px;overflow-wrap:anywhere;}
   .sig-why.old-note{border-top:1px solid var(--border);padding-top:7px;margin-top:9px;}
-  .note{margin:0;padding-left:15px;}
+  .note-main{font-weight:600;line-height:1.55;}
+  .note{margin:var(--gap) 0 0;padding-left:17px;}
+  .note-check{color:var(--sub);}
+  .note-check .note-label{font-weight:600;color:var(--sub);}
+  /* 태그는 알약 상자 대신 작은 회색 글씨(옵시디언 규칙) */
+  .sig-subitem-top .sig-target{background:none;padding:0;border-radius:0;font-size:10.5px;color:var(--sub);}
+  .sig-subitem-top .sig-target+.sig-target::before{content:"· ";}
   .note li{margin-bottom:var(--gap);}
   .note li:last-child{margin-bottom:0;}
   .note-label{font-weight:700;}
@@ -539,7 +545,10 @@ function noteHtml(text){
     body = body.slice(m[0].length);
   }
   const lines = noteLines(body);
-  return verdict + (lines.length ? `<ul class="note">${lines.map(l=>`<li>${lineHtml(l)}</li>`).join("")}</ul>` : "");
+  if (!lines.length) return verdict;
+  // 옵시디언 일일 요약과 같은 모양(2026-11-28): 첫 줄 = 결론(굵게) → 아래에 근거를 들여 씀 → "확인:" 줄은 회색 말머리
+  const rest = lines.slice(1).map(l=>`<li${/^확인\s?[:：]/.test(l) ? ' class="note-check"' : ""}>${lineHtml(l)}</li>`).join("");
+  return verdict + `<div class="note-main">${lineHtml(lines[0])}</div>` + (rest ? `<ul class="note">${rest}</ul>` : "");
 }
 // 옛 글은 줄바꿈이 지워진 채 저장돼 있음 — 줄바꿈이 하나도 없는 긴 글은 불릿 기호 앞과 문장 끝에서 줄을 나눠서 보여줌
 // (2026-11-28부터 수집되는 글은 원래 줄바꿈이 살아 있어서 그대로 보여줌)
@@ -582,7 +591,11 @@ function headText(c){ return fxUnits(decodeEnt(c.headline)); }
 function clusterView(c){
   const stamp = `${c.updated_at}|${(c.updates||[]).length}|${(c.sources||[]).length}`;
   if (c._v && c._v.stamp === stamp) return c._v;
-  const ups = (Array.isArray(c.updates) ? c.updates : []).slice().sort((a,b)=> new Date(b.at) - new Date(a.at));
+  const allUps = (Array.isArray(c.updates) ? c.updates : []).slice().sort((a,b)=> new Date(b.at) - new Date(a.at));
+  // 새 문체(개조식, summarize.js STYLE_VERSION)로 쓴 설명이 하나라도 있으면 그것만 씀 — 옛 말투("~했습니다") 설명과 안 섞이게.
+  // 다시 쓴 설명(rescored)은 그 카드 전체를 새로 정리한 것이라 맨 앞에 둠
+  const styled = allUps.filter(u=>u.style >= 2 && String(u.note || "").trim());
+  const ups = styled.length ? [...styled.filter(u=>u.rescored).slice(0, 1), ...styled.filter(u=>!u.rescored), ...allUps.filter(u=>!(u.style >= 2 && String(u.note || "").trim())).map(u=>({...u, note: "", facts: []}))] : allUps; // 옛 말투로 쓴 설명·숫자 목록은 안 섞음(중요도 이유·점수만 남김)
   const facts = [], seenF = new Set();
   const notes = [], seenN = new Set();
   for (const u of ups){
