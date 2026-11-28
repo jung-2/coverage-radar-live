@@ -83,8 +83,8 @@
   .sig-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;}
   .sig-badge{font-size:9px;padding:1px 6px;border-radius:8px;font-weight:700;color:#fff;letter-spacing:.02em;}
   .sig-target{font-size:10px;background:var(--pillbg);border-radius:10px;padding:2px 8px;color:var(--text);}
-  /* (2026-11-28 사용자: 시간을 전체적으로 더 눈에 띄게) 시각은 어디서나 같은 파란 알약 모양 */
-  .sig-src,.hot-time,.note-time,.post-time{font-size:12px;font-weight:700;color:var(--info);background:rgba(47,125,209,.13);border-radius:5px;padding:1px 7px;white-space:nowrap;font-variant-numeric:tabular-nums;}
+  /* (2026-11-28 사용자: 시간을 전체적으로 더 눈에 띄게) 시각은 어디서나 굵은 파란 글씨(바탕색은 사용자가 빼라고 함) */
+  .sig-src,.hot-time,.note-time,.post-time{font-size:12px;font-weight:700;color:var(--info);white-space:nowrap;font-variant-numeric:tabular-nums;}
   .sig-src{margin-left:auto;}
   .sig-title{font-size:12.5px;font-weight:500;}
   .sig-title a{text-decoration:none;}
@@ -633,17 +633,36 @@ function groupHtml(g){
     <div class="sig-group${best === "low" ? " low-only" : ""}">
       <div class="sig-group-top">
         ${impactBadge(best)}
-        <span class="sig-group-title">${esc(g.key)}</span>
+        <span class="sig-group-title">${esc(groupLabel(g.key))}</span>
         ${g.items.length > 1 ? `<span class="sig-group-count">${g.items.length}건</span>` : ""}
         <span class="sig-src">최근 ${kstTimeLabel(latestIso)}</span>
       </div>
-      <div class="sig-group-items">${g.items.map(c=>eventHtml(c, g.key)).join("")}</div>
+      <div class="sig-group-items">${g.items.map(c=>eventHtml(c, groupLabel(g.key))).join("")}</div>
     </div>`;
 }
+// 어느 카드로 묶을지(2026-11-28 고침, 사용자: "AI인프라에 앤스로픽·시추에이셔널 어웨어니스까지 다 묶여 있다").
+// 예전엔 AI가 붙인 첫 번째 태그로만 묶어서, AI가 "AI인프라"를 맨 앞에 붙인 서로 다른 사건이 한 카드에 다 들어갔음.
+// 지금은 제목이 태그 중 하나(회사·기관 이름)로 시작하면 그 이름으로 묶음 — "앤스로픽 2027년 …"은 앤스로픽 카드로.
+// 그게 아니면 첫 번째 태그로 묶되, 첫 번째 태그가 "AI인프라"·"인공지능"·"반도체"·"주식시장"처럼 너무 넓은 말이면
+// 묶지 않고 사건마다 따로 카드로 보여줌(넓은 말 하나에 관련 없는 사건이 몰리는 걸 막음). 넓은 말 목록은 아래 BROAD_KEYS.
+const BROAD_KEYS = new Set(["ai", "인공지능", "ai인프라", "ai산업", "ai서버", "반도체", "메모리", "메모리반도체", "주식시장", "미국주식시장",
+  "글로벌주식시장", "국내증시", "증시", "시황", "매크로", "거시경제", "경제", "기타", "기타소식", "텔레그램", "투자심리"]);
+const keyNorm = s => String(s).replace(/[^0-9A-Za-z가-힣]/g, "").toLowerCase();
+function groupKeyOf(c){
+  const targets = (c.targets || []).map(String).filter(Boolean);
+  const specific = targets.filter(t => !BROAD_KEYS.has(keyNorm(t)));
+  const head = keyNorm(headText(c));
+  let best = "";
+  for (const t of specific){ const n = keyNorm(t); if (n.length >= 2 && head.startsWith(n) && n.length > keyNorm(best).length) best = t; }
+  if (best) return best;
+  if (targets[0] && !BROAD_KEYS.has(keyNorm(targets[0]))) return targets[0];
+  return (specific[0] || targets[0] || "기타") + "¦" + c.id; // 혼자 쓰는 카드(이름 뒤에 카드 번호를 붙여서 안 묶이게)
+}
+function groupLabel(key){ return String(key).split("¦")[0]; }
 function groupClusters(clusters){
   const map = new Map();
   for (const c of clusters){
-    const key = (c.targets && c.targets[0]) ? String(c.targets[0]) : "기타";
+    const key = groupKeyOf(c);
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(c);
   }
@@ -681,7 +700,7 @@ function hotListHtml(clusters){
   const nNew = hot.filter(c=>isNewSinceSeen(c.updated_at)).length;
   const rows = hot.map(c=>{
     const v = clusterView(c);
-    const key = (c.targets && c.targets[0]) || "기타";
+    const key = groupLabel(groupKeyOf(c));
     // 설명 첫 줄만(리포트형은 "[BEAT]" 한 줄 뒤에 숫자가 오니까 그땐 다음 줄까지 붙임) — 전체는 눌러서 옆 패널에서
     const lines = String(v.notes[0]?.note || "").split("\n").map(l=>l.trim()).filter(Boolean);
     let firstLine = lines[0] || "";
