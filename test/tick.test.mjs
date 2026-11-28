@@ -19,6 +19,7 @@ globalThis.fetch = async (url, opt) => {
     return { ok: true, text: async () => html };
   }
   assert.match(u.host, /generativelanguage\.googleapis\.com/);
+  if (!opt || !opt.body) return { ok: true, json: async () => ({ models: [] }) };
   const body = JSON.parse(opt.body);
   const name = body.tools[0].functionDeclarations[0].name;
   const n = Number(body.contents[0].parts[0].text.match(/총 (\d+)건/)?.[1] || 0);

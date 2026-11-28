@@ -100,3 +100,36 @@ test("/api/poll: 마지막 수집이 5분 넘었으면 다시 수집", async () 
   assert.equal(r.results.find(x => x.mode === "telegram").inserted, 3);
   assert.equal(r.results.find(x => x.mode === "keywords").skipped, true);
 });
+
+// ── 2026-11-28 추가: 답글·줄바꿈·알림 글·못 읽는 채널 ──
+test("답글은 인용된 옛 글이 아니라 진짜 본문을 읽고, 줄바꿈·특수문자를 살림", () => {
+  const html = `<div class="tgme_widget_message text_not_supported_wrap js-widget_message" data-post="ch/7">
+    <a class="tgme_widget_message_reply"><div class="tgme_widget_message_text js-message_reply_text" dir="auto">인용된 옛 글</div></a>
+    <div class="tgme_widget_message_text js-message_text" dir="auto">매출 1,155억 &amp; 영업이익 57억<br/>단가 &#036;3.50 &gt; &#036;5.50</div>
+    <time datetime="2026-11-28T01:00:00+00:00" class="time">x</time></div>`;
+  const posts = parseTelegramPage(html, "ch");
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].rawText, "매출 1,155억 & 영업이익 57억\n단가 $3.50 > $5.50");
+});
+
+test("'○○ pinned «…»' 같은 알림 글은 저장하지 않음", () => {
+  const block = (id, cls, text) => `<div class="tgme_widget_message ${cls}" data-post="ch/${id}">
+    <div class="tgme_widget_message_text js-message_text" dir="auto">${text}</div>
+    <time datetime="2026-11-28T01:00:00+00:00" class="time">x</time></div>`;
+  const posts = parseTelegramPage(block(1, "service_message js-widget_message", "알림") + block(2, "js-widget_message", "채널이름 pinned « 옛 글 »") + block(3, "js-widget_message", "진짜 글"), "ch");
+  assert.deepEqual(posts.map(p => p.id), [3]);
+});
+
+test("웹 미리보기가 꺼진 채널은 '새 글 없음'이 아니라 '못 읽는 채널'로 남김", async () => {
+  db.DB.telegram_channels.push({ handle: "closed" }, { handle: "ok" });
+  channelPosts.ok = 2;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => String(url).includes("/closed")
+    ? { ok: true, url: "https://t.me/closed", text: async () => "<html>채널 소개</html>" }
+    : { ...(await realFetch(url)), url: String(url) };
+  try {
+    const r = await runCollect(db.client, "telegram");
+    assert.equal(r.inserted, 2);
+    assert.match(db.DB.status.find(s => s.id === 1).last_note, /못 읽는 채널: closed/);
+  } finally { globalThis.fetch = realFetch; }
+});

@@ -61,20 +61,71 @@
 //
 // AI 모델 변경(2026-10-25): 비용 때문에 Claude Haiku → Google Gemini 무료 등급으로 바꿈.
 // 무료 등급은 분당/하루 호출 횟수 한도가 있음(하루 한도는 미국 서부 자정 = 한국 오후 4~5시에 초기화).
-// 요약 품질이 아쉬우면 MODEL만 "gemini-3.8-flash"로 바꾸면 됨(대신 무료 한도가 더 빡빡함).
+// (2026-11-28) 모델은 이제 자동으로 고름 — 아래 resolveModels 참고.
 //
 // 참고: vercel.json에 이 함수의 maxDuration을 300초(Vercel 무료 플랜 최대치)로 설정해둬야
 // 백로그가 많이 밀렸을 때 여러 배치를 이어서 처리할 시간이 확보됨.
 
 import { createClient } from "@supabase/supabase-js";
 
-const MODEL = "gemini-3.5-flash-lite";
+// (2026-11-28) 사용자 결정: 무료 등급 안에서 윗급 모델로 올림(flash-lite → flash). 무료 한도가 더 빡빡해서
+// 429(한도 초과)가 자주 나면 "gemini-3.5-flash-lite"로 되돌릴 것.
+// (2026-11-28) 사용자 요청: "무료 버전 나올 때마다 자동으로 업그레이드". 모델 이름을 코드에 박아 두지 않고,
+// 하루에 한 번 Gemini의 모델 목록을 받아서 가장 새 버전의 flash 모델을 골라 씀(아래 resolveModels).
+// 순서: 가장 새 flash → 가장 새 flash-lite → 아래 FALLBACK_MODEL. 앞 모델이 없거나(404) 무료 한도에 걸리면(429)
+// 그 호출은 다음 모델로 넘어가서 요약이 멈추지 않게 함. 고른 결과는 status 테이블 id 4 줄에 하루 동안 기억해 둠.
+// 미리보기(-preview)·실험(-exp) 모델은 이름이 자주 사라져서 안 씀. 목록에는 "무료인지"가 안 나와서, 새 flash가
+// 무료 등급에 없으면 404/429로 자동으로 밀려남.
+const FALLBACK_MODEL = "gemini-3.5-flash-lite";
+const MODEL_LIST_ID = 4;                       // status 테이블: 고른 모델 목록(JSON)과 고른 시각
+const MODEL_LIST_TTL_MS = 24 * 60 * 60 * 1000; // 하루에 한 번만 목록을 다시 받음
+const MODEL_COOLDOWN_MS = 10 * 60 * 1000;      // 404/429가 난 모델은 이 시간 동안 건너뜀(매번 다시 실패하며 시간 쓰지 않게)
+const modelCooldown = new Map();               // 모델 이름 → 다시 써 볼 시각
+let lastModelUsed = "";
+
+// 모델 목록에서 쓸 후보를 순서대로 고름(시험하기 쉽게 따로 뺌)
+export function pickModels(models) {
+  const found = { flash: null, lite: null };
+  for (const m of Array.isArray(models) ? models : []) {
+    if (!(m.supportedGenerationMethods || []).includes("generateContent")) continue;
+    const hit = String(m.name || "").match(/^models\/(gemini-(\d+)\.(\d+)-flash(-lite)?)$/); // 정식 이름만(-preview, -exp, -latest 등 제외)
+    if (!hit) continue;
+    const kind = hit[4] ? "lite" : "flash";
+    const ver = Number(hit[2]) * 1000 + Number(hit[3]);
+    if (!found[kind] || ver > found[kind].ver) found[kind] = { id: hit[1], ver };
+  }
+  return [...new Set([found.flash?.id, found.lite?.id, FALLBACK_MODEL].filter(Boolean))];
+}
+
+async function resolveModels(sb, apiKey) {
+  try {
+    const { data: row } = await sb.from("status").select("id, last_run_at, last_note").eq("id", MODEL_LIST_ID).maybeSingle();
+    if (row && row.last_run_at && Date.now() - new Date(row.last_run_at).getTime() < MODEL_LIST_TTL_MS) {
+      const saved = JSON.parse(row.last_note || "[]");
+      if (Array.isArray(saved) && saved.length) return saved;
+    }
+    const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", { headers: { "x-goog-api-key": apiKey } });
+    if (!res.ok) throw new Error(`모델 목록 ${res.status}`);
+    const picked = pickModels((await res.json()).models);
+    const { error } = await sb.from("status").upsert(
+      { id: MODEL_LIST_ID, last_run_at: new Date().toISOString(), last_note: JSON.stringify(picked) }, { onConflict: "id" });
+    if (error) console.error("모델 목록 저장 실패(무시):", error.message);
+    return picked;
+  } catch (err) {
+    console.error("모델 목록 확인 실패 — 기본 모델로 진행:", err.message);
+    return [FALLBACK_MODEL];
+  }
+}
 const MAX_ITEMS = 40;               // 한 배치당 분류할 최대 신규 항목 수(비용/토큰 제한용 + 응답 길이 제한용)
                                      // (2026-09-27 150→75, 2026-10-23 75→40: 배치가 크면 응답이 길어져서 한 번에
                                      // 1~2분씩 걸리고 형식 오류도 잦았음 — 작게 끊어서 빨리빨리 여러 번 처리하는 게 나음)
 const SCAN_LIMIT = 1000;            // 커서 이후 항목을 훑어볼 최대 개수(url/시각만 가볍게 읽음 — fetchNextBatch 참고)
-const PROMPT_SUMMARY_CHARS = 400;   // 클러스터링 프롬프트에 같이 보여줄 본문 길이(2026-10-23 추가 — 예전엔 앞 60자 제목만 보여줘서
+const PROMPT_SUMMARY_CHARS = 1500;  // 클러스터링 프롬프트에 같이 보여줄 본문 길이(2026-10-23 추가 — 예전엔 앞 60자 제목만 보여줘서
                                      // 리포트 숫자를 AI가 아예 못 봤음)
+                                     // (2026-11-28 400→1500: 글 4개 중 1개가 400자를 넘는데 그 뒤쪽은 AI가 아예 못 봐서,
+                                     //  긴 리포트 요약 글의 뒤쪽 숫자가 통째로 빠졌음. 실제 48시간 데이터로 재 보니 원문 숫자의 10%만 요약에 남았음)
+const MAX_FACTS = 30;               // 사건(update) 하나에 저장할 숫자·사실 줄 수 한도
+const MAX_FACT_CHARS = 300;         // 한 줄 최대 길이
 const SPLIT_MIN_CHARS = 300;        // 이보다 짧은 텔레그램 글은 "뉴스정리" 분리 후보에서 뺌(짧은 글은 쪼갤 게 없음)
 const SPLIT_TEXT_CHARS = 1500;      // 분리 단계에 보여줄 원문 최대 길이(원문 3000자 × 수십 건이면 프롬프트가 너무 커짐)
 const MAX_EXISTING_CLUSTERS = 80;   // 프롬프트에 보여줄 "오늘 진행 중인 클러스터" 최대 개수(이보다 많아도
@@ -95,6 +146,32 @@ const TIME_BUDGET_MS = 60 * 1000;   // 이 시간이 지나면 다음 배치를 
                                      // 넘겨버려서 Vercel이 함수를 강제 종료(FUNCTION_INVOCATION_TIMEOUT)하는 경우가
                                      // 있었음 — 마지막 배치가 끝날 여유를 충분히 두기 위해 더 보수적으로 줄임)
 const IMPACT_RANK = { high: 3, medium: 2, low: 1 };
+
+// ── 숫자·사실 목록(facts, 2026-11-28 추가) ──────────────────────────
+// 예전엔 카드에 AI가 쓴 2~3문장(note)만 남아서 원문 숫자가 거의 다 사라졌음(low는 설명 자체가 없었음).
+// 지금은 AI가 note와 별개로 "원문에 나온 숫자·사실을 한 줄씩 전부" facts로 돌려주고, 이걸 updates 이력에
+// {at, note, facts, run_at}로 같이 저장함(새 컬럼 없이 기존 updates 칸에 들어감). 화면이 모든 이력의 facts를 모아서 보여줌.
+function cleanFacts(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const f of Array.isArray(raw) ? raw : []) {
+    if (typeof f !== "string") continue;
+    const line = f.replace(/\s+/g, " ").replace(/^[-•·*▪◦]\s*/, "").trim().slice(0, MAX_FACT_CHARS);
+    const key = line.replace(/\s/g, "");
+    if (!line || seen.has(key)) continue;
+    seen.add(key);
+    out.push(line);
+    if (out.length >= MAX_FACTS) break;
+  }
+  return out;
+}
+
+// ── 잡동사니 통 막기(2026-11-28 추가) ──────────────────────────────
+// AI가 관련 없는 글을 "기타 소식 모음" 같은 카드 하나에 계속 몰아넣어서, 글 37개가 한 카드에 묻히고
+// 설명은 마지막 글 것만 남는 일이 있었음. 이런 제목의 카드는 (1) 합칠 대상 목록에서 빼서 더 안 커지게 하고
+// (2) AI가 새로 만들려고 하면 글 하나씩 따로 떼어 냄.
+const JUNK_BUCKET_RE = /^기타|(소식|뉴스|이슈|잡담|단신)\s*(모음|정리)|모음\s*\S{0,4}$/;
+function isJunkBucket(headline) { return JUNK_BUCKET_RE.test(String(headline || "").trim()); }
 const DUP_SIMILARITY_THRESHOLD = 0.45; // 이 이상이면 "같은 사건"으로 보고 강제 병합 대상으로 판단
 
 const CAT_LABEL = {
@@ -234,12 +311,16 @@ const UPDATE_TOOL = {
             },
             headline: {
               type: "string",
-              description: "existing_cluster_ref가 0일 때만 채움: 새 클러스터의 핵심을 담은 한 줄 제목 — 회사 단위 클러스터면 회사명으로 시작, 섹터 단위 클러스터면 섹터/테마명으로 시작. 원문 헤드라인을 그대로 복사하지 말고 새로 정리해서 쓸 것. 순한글로만 작성(한자 금지)",
+              description: "existing_cluster_ref가 0일 때만 채움: 새 클러스터의 핵심을 담은 한 줄 제목 — 회사 단위 클러스터면 회사명으로 시작, 섹터 단위 클러스터면 섹터/테마명으로 시작. 원문 헤드라인을 그대로 복사하지 말고 새로 정리해서 쓸 것. 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것",
             },
             impact: {
               type: "string",
               enum: ["high", "medium", "low"],
-              description: "이 클러스터의 지금 시점 기준 종합 중요도. 특정 종목/산업에 실질적 영향이 있는지로 판단. 이미 알려진 내용의 반복, 잡담성 내용은 low",
+              description: "이 클러스터의 중요도. 프롬프트의 [impact 규칙]대로: high = 숫자가 바뀌는 것(전망치·추정치 변경, 판도를 바꿀 이벤트, 숫자로 뒷받침된 새 의견), medium = 새 정보지만 숫자 근거가 약하거나 파급이 한 회사에 그침, low = 새 의견도 숫자 변화도 없는 반복·잡담·시황 중계",
+            },
+            impact_reason: {
+              type: "string",
+              description: "왜 이 중요도인지 10자 안팎 한마디. high/medium이면 다음 중 하나로: \"전망치 변경\", \"판도 이벤트\", \"새 의견+숫자\", \"실적·추정치 변경\", \"가격·수급 변화\", \"새 의견(숫자 없음)\", \"개별 회사 소식\". low면 \"반복\", \"잡담\", \"시황 중계\", \"홍보\" 등",
             },
             targets: {
               type: "array",
@@ -249,10 +330,15 @@ const UPDATE_TOOL = {
             },
             note: {
               type: "string",
-              description: "impact가 medium 또는 high일 때만 채움: 리포트/실적 관련이면 실적(매출·영업이익·EPS, BEAT/MISS)·목표주가 변화·추정치 변화율·핵심 driver 숫자 순으로 줄바꿈 구분해서 작성, 일반 뉴스면 2~3문장 자연스러운 서술. 순한글로만 작성(한자 금지), 너무 축약하지 말 것. impact가 low면 빈 문자열",
+              description: "모든 클러스터에서 채움(low는 무슨 내용인지 한 줄이면 됨). medium/high는: 리포트/실적 관련이면 실적(매출·영업이익·EPS, BEAT/MISS)·목표주가 변화·추정치 변화율·핵심 driver 숫자 순으로 줄바꿈 구분해서 작성, 일반 뉴스면 2~3문장 자연스러운 서술. 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것, 너무 축약하지 말 것",
+            },
+            facts: {
+              type: "array",
+              items: { type: "string" },
+              description: "이 update에 속한 원문에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부 옮겨 적은 목록(중요도와 상관없이 채움). 예: \"3분기 매출 1,155.6억위안(+21.6% YoY), 컨센서스 1,133.7억위안 상회\", \"TP 30만원 → 35만원\", \"GPU 32만 5천 개를 월 12.5억 달러에 임대\". 숫자·단위·회사명·제품명은 원문 표기 그대로(AI5, HBM4, $3.50/kWh — 한글로 풀어 쓰지 말 것). 원문에 숫자가 있으면 하나도 빼지 말 것. 원문에 없는 숫자를 만들지 말 것. 숫자나 구체적 사실이 전혀 없는 잡담이면 빈 배열",
             },
           },
-          required: ["indices", "existing_cluster_ref", "headline", "impact", "targets", "note"],
+          required: ["indices", "existing_cluster_ref", "headline", "impact", "impact_reason", "targets", "note", "facts"],
         },
       },
     },
@@ -288,7 +374,7 @@ const TELEGRAM_SPLIT_TOOL = {
               items: {
                 type: "object",
                 properties: {
-                  headline: { type: "string", description: "개별 뉴스의 한 줄 제목. 순한글로만 작성(한자 금지)" },
+                  headline: { type: "string", description: "개별 뉴스의 한 줄 제목. 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것" },
                   detail: { type: "string", description: "그 뉴스에 대해 원문에 나온 구체적 내용(숫자·사실관계 등 있는 만큼)" },
                 },
                 required: ["headline", "detail"],
@@ -308,7 +394,28 @@ const TELEGRAM_SPLIT_TOOL = {
 // 도구(function) 하나를 반드시 호출하게 강제해서(mode: ANY) 구조화된 JSON 결과만 받음 — Claude 때의 tool_choice와 같은 역할.
 // 반환값: { args(도구 입력값 객체, 없으면 null), finishReason }
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+// 후보 모델을 순서대로 써 봄: 없는 모델(404)이거나 한도 초과(429)면 다음 모델로. 마지막 후보의 오류는 그대로 던짐.
+let modelCandidates = null; // 이번 실행에서 쓸 후보(처음 AI를 부를 때 한 번만 정함)
+let modelDb = null;
 async function callGemini(apiKey, tool, prompt, maxTokens) {
+  if (!modelCandidates) modelCandidates = await resolveModels(modelDb, apiKey);
+  const now = Date.now();
+  const usable = modelCandidates.filter(m => !(modelCooldown.get(m) > now));
+  const order = usable.length ? usable : [modelCandidates[modelCandidates.length - 1]];
+  for (let i = 0; i < order.length; i++) {
+    try {
+      const out = await callGeminiModel(order[i], apiKey, tool, prompt, maxTokens);
+      lastModelUsed = order[i];
+      return out;
+    } catch (err) {
+      const skippable = err.status === 404 || err.status === 429;
+      if (!skippable || i === order.length - 1) throw err;
+      modelCooldown.set(order[i], Date.now() + MODEL_COOLDOWN_MS);
+      console.error(`${order[i]} 사용 불가(${err.status}) — ${order[i + 1]}(으)로 넘어감`);
+    }
+  }
+}
+async function callGeminiModel(MODEL, apiKey, tool, prompt, maxTokens) {
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     tools: [{ functionDeclarations: [{
@@ -345,7 +452,9 @@ async function callGemini(apiKey, tool, prompt, maxTokens) {
       continue;
     }
     const hint = apiRes.status === 429 ? " (무료 한도 초과 — 잠시 후, 하루 한도면 한국 시간 오후 4~5시 이후 다시 시도)" : "";
-    throw new Error(`Gemini API 오류 ${apiRes.status}${hint}: ${errBody.slice(0, 500)}`);
+    const apiErr = new Error(`Gemini API 오류 ${apiRes.status}${hint}: ${errBody.slice(0, 500)}`);
+    apiErr.status = apiRes.status;
+    throw apiErr;
   }
 }
 
@@ -538,7 +647,7 @@ async function summarizeCore(req, res, sb, GEMINI_API_KEY) {
         .order("updated_at", { ascending: false })
         .limit(MAX_EXISTING_CLUSTERS);
       if (exErr) throw exErr;
-      const existingClusters = existingClustersRaw || [];
+      const existingClusters = (existingClustersRaw || []).filter(c => !isJunkBucket(c.headline));
 
       // AI가 응답을 잘라먹거나(max_tokens) 형식을 못 맞추면(2026-10-23 추가) 예전엔 바로 오류로 끝나고 커서도
       // 안 움직여서, 다시 눌러도 같은 배치에서 계속 똑같이 실패했음. 지금은 배치를 반으로 줄여서 다시 시도하고,
@@ -581,13 +690,23 @@ ${newLines}
 - 섹터/테마 단위 클러스터에서 여러 회사가 언급되더라도, 그 회사만의 고유한 숫자(목표주가·추정치 변경·실적 등)가 리포트/기사에 구체적으로 주어진 경우에만 그 회사도 targets에 추가할 것. 단순히 예시로 이름만 스쳐 지나간 경우는 targets에 추가하지 말 것
 
 [headline 규칙]
-- headline은 existing_cluster_ref가 0일 때만 채울 것 — 새 클러스터의 핵심을 담은 새 한 줄 제목. 회사 단위면 회사명으로 시작, 섹터 단위면 섹터/테마명으로 시작. 원문 헤드라인을 그대로 복사하지 말고 새로 정리해서 쓸 것. 순한글로만 작성(한자 금지)
+- headline은 existing_cluster_ref가 0일 때만 채울 것 — 새 클러스터의 핵심을 담은 새 한 줄 제목. 회사 단위면 회사명으로 시작, 섹터 단위면 섹터/테마명으로 시작. 원문 헤드라인을 그대로 복사하지 말고 새로 정리해서 쓸 것. 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것
 
 [impact 규칙]
-- impact는 이 클러스터가 특정 종목이나 산업에 실질적인 영향을 줄 수 있는지로 판단. 이미 알려진 내용의 반복, 일반적인 시황 잡담, 영향이 불분명한 내용은 low
+(2026-11-28 사용자가 직접 정한 기준 — 핵심은 "숫자가 바뀌는 것"이 중요하다는 것. 특정 회사 목록이 아니라 산업(섹터) 전체 관점에서 판단할 것)
+- high: 아래 중 하나에 해당하고, 원문에 그걸 보여주는 구체적 숫자나 사실이 있을 때
+  · 시장·산업 전체의 숫자 전망치가 바뀜(시장 규모, capex, 출하량, 가격, 수요·공급 전망의 상향/하향)
+  · 산업의 판도를 크게 바꿀 수 있는 이벤트(규제·관세·수출통제, 대형 계약·인수합병, 기술 전환, 공급 차질, 큰 고객의 발주·투자 계획 변경 등)
+  · 특정 산업에 대한 새로운 의견인데 그걸 뒷받침하는 숫자가 같이 나옴(기존에 알려진 시각과 다른 뷰 + 근거 숫자)
+  · 실적·가이던스·추정치·목표주가처럼 숫자가 실제로 바뀌었고, 그 변화가 그 회사 하나가 아니라 산업 전체 흐름을 말해 줌(업계 대표 회사의 실적 서프라이즈, 여러 회사 추정치 동시 변경 등)
+- medium: 새 정보이긴 하지만 high에는 못 미치는 것 — 새로운 의견인데 뒷받침 숫자가 없음 / 숫자 변화가 있지만 파급이 그 회사 하나에 그침 / 이미 알려진 흐름을 새 숫자로 다시 확인해 준 정도
+- low: 새로운 의견도 숫자 변화도 없는 것 — 이미 나온 내용의 반복·재전달, 주가·지수 등락만 전하는 시황 중계, 개인 감상·잡담, 홍보·공지, 일정 안내
+- 헷갈리면 이렇게 물어볼 것: "이 글을 읽고 나서 바꿔야 할 숫자(전망·추정·가정)가 있는가?" 있으면 high 쪽, 생각은 바뀌는데 숫자는 아직이면 medium, 아무것도 안 바뀌면 low
+- 주가가 많이 올랐다/내렸다는 것만으로는 high가 아님(왜 움직였는지 새 숫자·사건이 있어야 함). 글이 길거나 유명한 사람이 썼다는 것도 이유가 안 됨
+- impact_reason에 왜 그 중요도인지 한마디로 적을 것(도구 설명의 보기 중에서 고름)
 
 [note 작성 규칙 — 매우 중요, 아래 형식을 반드시 지킬 것]
-note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아래 세 유형 중 해당하는 형식을 따르고, 유형마다 줄바꿈(\\n)으로 항목을 구분할 것:
+note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 한 줄이면 됨. medium/high는 아래 세 유형 중 해당하는 형식을 따르고, 유형마다 줄바꿈(\\n)으로 항목을 구분할 것:
 
 (유형 A) 증권사 리서치 리포트에서 나온 "회사 단위" 클러스터(목표주가·투자의견·실적추정치·컨센서스 비교·애널리스트 코멘트 등이 언급됨):
   - 실적이 발표되어 컨센서스와 비교된 경우, 첫 줄을 "[BEAT]" 또는 "[MISS]" 또는 "[혼조]" 중 하나로 시작(매출/영업이익/EPS 중 다수 기준으로 종합 판단). 실적 발표 자체가 없으면 이 줄은 생략
@@ -609,7 +728,17 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
 (유형 C) 리포트가 아닌 일반 뉴스(공시, 계약, 사건사고 등):
   - 기존처럼 자연스러운 문장 2~3문장으로. 기존 클러스터에 합치는 경우 이번에 새로 반영된 내용이 무엇인지, 새 클러스터인 경우 왜 중요한지. 너무 축약하지 말고 읽으면 바로 이해되게
 
-모든 유형 공통: 순한글로만 작성(한자 금지)`;
+모든 유형 공통: 한글로 작성(한자 금지). 단 숫자는 아라비아 숫자 그대로, 영어 회사명·제품명·단위는 원문 표기 그대로 둘 것
+- 실제로 있었던 나쁜 예: "AI5 칩"을 "에이아이오분 칩"으로, "$3.50/kWh → $5.50/kWh"를 "삼점오달러에서 오점오달러"로, "60%"를 "60퍼센트"로 풀어 쓴 것 — 전부 금지. 원문 표기 그대로 쓸 것
+
+[facts 작성 규칙 — note와 별개로 반드시 채울 것]
+- facts는 이 update에 속한 원문들에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부 옮겨 적은 목록. impact가 low여도 원문에 숫자가 있으면 채움
+- note에 이미 쓴 숫자라도 facts에 다시 적을 것. 원문에 숫자가 10개 있으면 facts에도 10개가 다 들어가야 함 — 대표 숫자 한두 개만 고르는 것 금지
+- 각 줄은 "무엇이 얼마"인지 알 수 있게 주어와 함께(예: "핵심 로컬 커머스 영업이익 57억위안(전년동기 -141억위안에서 흑자전환)"). 비교 대상(컨센서스·전년·이전 값)이 원문에 있으면 같이 적을 것
+- 원문에 없는 숫자를 만들거나 계산해서 넣지 말 것. 숫자도 구체적 사실도 없는 잡담·감상이면 빈 배열
+
+[잡동사니 통 금지]
+- 서로 관련 없는 글을 "기타 소식 모음"·"기타 뉴스"·"잡담 모음" 같은 통 하나에 몰아넣지 말 것. 관련 없는 글은 각각 따로 update를 만들고 impact를 low로 둘 것`;
 
         const { args, finishReason } = await callGemini(GEMINI_API_KEY, UPDATE_TOOL, prompt, MAX_TOKENS);
 
@@ -647,6 +776,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
             idxList: [],
             targets: new Set(clusterRow.targets || []),
             notes: [],
+            facts: [],
             impacts: [],
           });
         }
@@ -661,8 +791,11 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         idxList.forEach(i => seen.add(i));
 
         const impact = ["high", "medium", "low"].includes(u.impact) ? u.impact : "low";
+        // 왜 그 중요도인지 한마디(2026-11-28 추가) — 화면 카드의 중요도 옆에 작게 보여줘서, 기준이 틀렸을 때 바로 알아볼 수 있게 함
+        const reason = typeof u.impact_reason === "string" ? u.impact_reason.replace(/\s+/g, " ").trim().slice(0, 30) : "";
         const targets = Array.isArray(u.targets) ? u.targets.filter(Boolean) : [];
         const note = typeof u.note === "string" ? u.note.trim() : "";
+        const facts = cleanFacts(u.facts);
         const ref = Number.isInteger(u.existing_cluster_ref) ? u.existing_cluster_ref : 0;
 
         const refOriginMatches = ref >= 1 && ref <= existingClusters.length
@@ -672,16 +805,21 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
           g.idxList.push(...idxList);
           targets.forEach(t => g.targets.add(t));
           if (note) g.notes.push(note);
+          g.facts.push(...facts);
           g.impacts.push(impact);
+          if (reason && IMPACT_RANK[impact] >= IMPACT_RANK[g.reasonImpact || "low"]) { g.reason = reason; g.reasonImpact = impact; }
+        } else if (isJunkBucket(u.headline) && idxList.length > 1) {
+          // 관련 없는 글을 한 통에 몰아넣으려 한 것 → 글 하나씩 따로(설명은 섞여 있어서 못 씀. 원문은 화면에서 바로 열어 볼 수 있음)
+          for (const i of idxList) newEntries.push({ idxList: [i], headline: items[i - 1].title, targets: [], impact: "low", note: "", facts: [] });
         } else {
-          newEntries.push({ idxList, headline: u.headline, targets, impact, note });
+          newEntries.push({ idxList, headline: u.headline, targets, impact, note, facts, reason });
         }
       }
 
       // 모델이 빠뜨린 신규 항목이 있으면 단독 클러스터 후보로 자동 보충 — 분류 누락 방지용 안전장치
       for (let i = 1; i <= items.length; i++) {
         if (seen.has(i)) continue;
-        newEntries.push({ idxList: [i], headline: items[i - 1].title, targets: [], impact: "low", note: "" });
+        newEntries.push({ idxList: [i], headline: items[i - 1].title, targets: [], impact: "low", note: "", facts: [] });
       }
 
       // ── 중복 클러스터 강제 병합 안전장치 ──────────────────────
@@ -694,9 +832,10 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
           match.idxList.push(...entry.idxList);
           entry.targets.forEach(t => { if (!match.targets.includes(t)) match.targets.push(t); });
           if (entry.note) match.note = match.note ? `${match.note}\n${entry.note}` : entry.note;
-          if (IMPACT_RANK[entry.impact] > IMPACT_RANK[match.impact]) match.impact = entry.impact;
+          match.facts = cleanFacts([...match.facts, ...entry.facts]);
+          if (IMPACT_RANK[entry.impact] > IMPACT_RANK[match.impact]) { match.impact = entry.impact; match.reason = entry.reason; }
         } else {
-          mergedNewEntries.push({ ...entry, targets: [...entry.targets] });
+          mergedNewEntries.push({ ...entry, targets: [...entry.targets], facts: [...entry.facts] });
         }
       }
 
@@ -707,7 +846,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         .select("id, headline, impact, targets, why, sources, updates, updated_at")
         .in("day_key", batchDayKeys);
       if (allErr) throw allErr;
-      const allTodayClusters = allTodayClustersRaw || [];
+      const allTodayClusters = (allTodayClustersRaw || []).filter(c => !isJunkBucket(c.headline));
 
       const finalNewEntries = [];
       for (const entry of mergedNewEntries) {
@@ -724,7 +863,9 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
           target.idxList.push(...entry.idxList);
           entry.targets.forEach(t => target.targets.add(t));
           if (entry.note) target.notes.push(entry.note);
+          target.facts.push(...entry.facts);
           target.impacts.push(entry.impact);
+          if (entry.reason && IMPACT_RANK[entry.impact] >= IMPACT_RANK[target.reasonImpact || "low"]) { target.reason = entry.reason; target.reasonImpact = entry.impact; }
         } else {
           finalNewEntries.push(entry);
         }
@@ -755,7 +896,10 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
         const prevUpdatedAt = current.updated_at ? new Date(current.updated_at) : null;
         const nextUpdatedAt = (prevUpdatedAt && prevUpdatedAt > newItemsAt) ? prevUpdatedAt : newItemsAt;
         const mergedUpdates = [...(current.updates || [])];
-        if (mergedNote) mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, run_at: runAtIso });
+        const mergedFacts = cleanFacts(g.facts);
+        if (mergedNote || mergedFacts.length) {
+          mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, ...(mergedFacts.length ? { facts: mergedFacts } : {}), ...(g.reason ? { reason: g.reason } : {}), run_at: runAtIso });
+        }
 
         const { error: updErr } = await sb
           .from("clusters")
@@ -792,7 +936,7 @@ note는 impact가 medium 또는 high일 때만 채움(low면 빈 문자열). 아
             targets,
             why: e.note,
             sources,
-            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", run_at: runAtIso }],
+            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", ...(e.facts.length ? { facts: e.facts } : {}), ...(e.reason ? { reason: e.reason } : {}), run_at: runAtIso }],
             created_at: createdAt.toISOString(),
             updated_at: createdAt.toISOString(),
           };
@@ -924,13 +1068,14 @@ export default async function handler(req, res) {
   let code = 200, body = {};
   const capture = { status(c) { code = c; return capture; }, json(j) { body = j; } };
   try {
+    modelCandidates = null; modelDb = sb; lastModelUsed = "";
     await summarizeCore(req, capture, sb, GEMINI_API_KEY);
   } catch (err) {
     code = 500; body = { error: String(err.message || err) };
   }
   const note = code !== 200 ? `오류: ${body.error || code}`
     : body.skipped ? "새 글 없음"
-    : `${body.item_count}건 정리(새 카드 ${body.new_clusters}개, 갱신 ${body.updated_clusters}개)` + (body.has_more_backlog ? " · 밀린 것 남음" : "");
+    : `${body.item_count}건 정리(새 카드 ${body.new_clusters}개, 갱신 ${body.updated_clusters}개)` + (body.has_more_backlog ? " · 밀린 것 남음" : "") + (lastModelUsed ? ` · ${lastModelUsed}` : "");
   await releaseLock(sb, note);
   res.status(code).json(body);
 }

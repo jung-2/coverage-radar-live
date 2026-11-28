@@ -17,8 +17,15 @@ let geminiCalls = 0;
 function geminiOk(args) {
   return { ok: true, json: async () => ({ candidates: [{ finishReason: "STOP", content: { parts: [{ functionCall: { name: args.__name, args } }] } }] }) };
 }
+let modelList = [];   // 가짜 모델 목록(비어 있으면 기본 모델만 씀)
+let modelsTried = [];  // 요약 호출에 쓰인 모델 이름들
+let missingModels = new Set(); // 이 모델은 404로 답함
 globalThis.fetch = async (url, opt) => {
   assert.match(String(url), /generativelanguage\.googleapis\.com/);
+  if (!opt || !opt.body) return { ok: true, json: async () => ({ models: modelList }) };
+  const usedModel = String(url).match(/models\/([^:]+):/)[1];
+  modelsTried.push(usedModel);
+  if (missingModels.has(usedModel)) return { ok: false, status: 404, text: async () => "model not found" };
   geminiCalls++;
   const body = JSON.parse(opt.body);
   const name = body.tools[0].functionDeclarations[0].name;
@@ -54,7 +61,7 @@ async function press(continuation) {
 }
 const clusterUrls = () => db.DB.clusters.flatMap(c => c.sources.map(s => s.url));
 
-beforeEach(() => { db = makeDb(); script = []; geminiCalls = 0; });
+beforeEach(() => { db = makeDb(); script = []; geminiCalls = 0; modelList = []; modelsTried = []; missingModels = new Set(); });
 
 test("같은 시각에 몰려 들어온 100건을 빠짐없이 한 번씩만 처리하고, 키워드 뉴스는 건드리지 않음", async () => {
   const at = microIso(NOW - 1800e3);
@@ -131,4 +138,99 @@ test("48시간보다 오래된 백로그는 건너뜀", async () => {
   const r = await press(false);
   assert.equal(r.item_count, 1);
   assert.deepEqual(clusterUrls(), ["https://t.me/ch/0002"]);
+});
+
+// ── 2026-11-28 추가: 숫자·사실 목록(facts), 잡동사니 통 막기 ──
+// 가짜 Gemini가 이번 한 번만 이 함수가 만든 updates로 답하게 함
+function answerWith(makeUpdates) {
+  const prev = globalThis.fetch;
+  globalThis.fetch = async (url, opt) => {
+    if (!opt || !opt.body) return prev(url, opt);
+    const body = JSON.parse(opt.body);
+    const name = body.tools[0].functionDeclarations[0].name;
+    if (name !== "emit_updates") return prev(url, opt);
+    globalThis.fetch = prev;
+    geminiCalls++;
+    return geminiOk({ __name: name, updates: makeUpdates(body.contents[0].parts[0].text) });
+  };
+}
+
+test("AI가 준 숫자·사실 목록을 카드에 저장하고, 같은 카드에 글이 더 붙으면 이력으로 쌓임", async () => {
+  db.DB.items.push(tgItem(1, microIso(NOW - 120e3)));
+  answerWith(() => [{ indices: [1], existing_cluster_ref: 0, headline: "메이투안 3분기 실적", impact: "high", targets: ["메이투안"],
+    note: "[BEAT]\n매출 예상 상회", facts: ["• 매출 1,155.6억위안(+21.6% YoY)", "매출 1,155.6억위안(+21.6% YoY)", "조정 순이익 18.5억위안 vs. 예상 22억위안", 42] }]);
+  await press(false);
+  assert.deepEqual(db.DB.clusters[0].updates[0].facts, ["매출 1,155.6억위안(+21.6% YoY)", "조정 순이익 18.5억위안 vs. 예상 22억위안"], "앞 기호·겹치는 줄·글자가 아닌 값은 정리됨");
+
+  db.DB.items.push(tgItem(2, microIso(NOW - 60e3)));
+  answerWith(() => [{ indices: [1], existing_cluster_ref: 1, headline: "", impact: "medium", targets: ["메이투안"], note: "", facts: ["핵심 로컬 커머스 영업이익률 7.3%"] }]);
+  await press(true);
+  assert.equal(db.DB.clusters.length, 1);
+  assert.equal(db.DB.clusters[0].sources.length, 2);
+  assert.deepEqual(db.DB.clusters[0].updates.map(u => u.facts), [["매출 1,155.6억위안(+21.6% YoY)", "조정 순이익 18.5억위안 vs. 예상 22억위안"], ["핵심 로컬 커머스 영업이익률 7.3%"]], "설명이 비어도 숫자 목록은 이력에 남음");
+});
+
+test("AI에게 글 본문을 1500자까지 보여줌(400자 뒤쪽 숫자가 잘리지 않게)", async () => {
+  db.DB.items.push(tgItem(1, microIso(NOW - 60e3), { summary: "가".repeat(1200) + " 끝쪽숫자 987.6억원" }));
+  let seen = "";
+  answerWith((prompt) => { seen = prompt; return [{ indices: [1], existing_cluster_ref: 0, headline: "사건", impact: "low", targets: ["회사"], note: "한 줄", facts: [] }]; });
+  await press(false);
+  assert.match(seen, /987\.6억원/);
+});
+
+test("'기타 소식 모음' 같은 잡동사니 통은 만들지 않고 글 하나씩 따로, 이미 있는 통에는 더 넣지 않음", async () => {
+  const today = new Date(NOW + 9 * 3600e3).toISOString().slice(0, 10);
+  db.DB.clusters.push({ id: 900, day_key: today, headline: "기타 소식 모음 삼십번", impact: "low", targets: ["기타소식"], why: "",
+    sources: [{ url: "https://t.me/ch/9000", source: "텔레그램: ch", published_at: new Date(NOW - 3600e3).toISOString() }], updates: [], updated_at: new Date(NOW - 1800e3).toISOString() });
+  for (let i = 1; i <= 3; i++) db.DB.items.push(tgItem(i, microIso(NOW - 60e3)));
+  let seen = "";
+  answerWith((prompt) => { seen = prompt; return [{ indices: [1, 2, 3], existing_cluster_ref: 0, headline: "기타 소식 모음", impact: "low", targets: ["기타소식"], note: "이것저것", facts: [] }]; });
+  await press(false);
+  assert.ok(!seen.includes("기타 소식 모음 삼십번"), "잡동사니 통은 합칠 대상 목록에 안 보여줌");
+  const fresh = db.DB.clusters.filter(c => c.id !== 900);
+  assert.equal(fresh.length, 3, "글 3개가 카드 3개로 따로");
+  assert.equal(db.DB.clusters.find(c => c.id === 900).sources.length, 1, "옛 통은 그대로");
+});
+
+test("중요도 이유 한마디(impact_reason)를 카드 이력에 남김", async () => {
+  db.DB.items.push(tgItem(1, microIso(NOW - 60e3)));
+  answerWith(() => [{ indices: [1], existing_cluster_ref: 0, headline: "HBM 시장 전망 상향", impact: "high", impact_reason: "전망치 변경", targets: ["HBM"], note: "한 줄", facts: [] }]);
+  await press(false);
+  assert.equal(db.DB.clusters[0].impact, "high");
+  assert.equal(db.DB.clusters[0].updates[0].reason, "전망치 변경");
+});
+
+// ── 2026-11-28 추가: Gemini 모델 자동 고르기 ──
+const gm = (name, methods = ["generateContent"]) => ({ name: `models/${name}`, supportedGenerationMethods: methods });
+
+test("모델 목록에서 가장 새 flash를 고르고, 하루 동안은 목록을 다시 받지 않음", async () => {
+  modelList = [gm("gemini-3.5-flash"), gm("gemini-3.8-flash"), gm("gemini-4.0-flash"), gm("gemini-4.0-flash-lite"),
+    gm("gemini-4.5-flash-preview"), gm("gemini-9.9-flash", ["embedContent"]), gm("gemini-4.0-pro")];
+  db.DB.items.push(tgItem(1, microIso(NOW - 120e3)));
+  await press(false);
+  assert.equal(new Set(modelsTried).size, 1);
+  assert.equal(modelsTried[0], "gemini-4.0-flash", "미리보기·pro·요약 못 하는 모델은 안 고름");
+  assert.deepEqual(JSON.parse(db.DB.status.find(r => r.id === 4).last_note), ["gemini-4.0-flash", "gemini-4.0-flash-lite", "gemini-3.5-flash-lite"]);
+  assert.match(db.DB.status.find(r => r.id === 3).last_note, /gemini-4\.0-flash$/);
+
+  modelList = [gm("gemini-5.0-flash")]; // 새 모델이 나와도 하루가 지나기 전엔 그대로
+  modelsTried = [];
+  db.DB.items.push(tgItem(2, microIso(NOW - 60e3)));
+  await press(true);
+  assert.equal(modelsTried[0], "gemini-4.0-flash");
+  db.DB.status.find(r => r.id === 4).last_run_at = new Date(NOW - 25 * 3600e3).toISOString(); // 하루 지남
+  modelsTried = [];
+  db.DB.items.push(tgItem(3, microIso(NOW - 30e3)));
+  await press(true);
+  assert.equal(modelsTried[0], "gemini-5.0-flash");
+});
+
+test("고른 모델을 무료로 못 쓰면(404) 다음 모델로 넘어가서 요약은 계속됨", async () => {
+  modelList = [gm("gemini-7.0-flash"), gm("gemini-7.0-flash-lite")];
+  missingModels = new Set(["gemini-7.0-flash"]);
+  db.DB.items.push(tgItem(1, microIso(NOW - 60e3)));
+  const r = await press(false);
+  assert.equal(r.code, 200);
+  assert.equal(clusterUrls().length, 1);
+  assert.equal(modelsTried.at(-1), "gemini-7.0-flash-lite");
 });
