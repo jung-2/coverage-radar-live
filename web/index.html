@@ -512,7 +512,7 @@ function clusterView(c){
       const k = String(f).replace(/\s/g, "");
       if (k && !seenF.has(k)){ seenF.add(k); facts.push(String(f)); }
     }
-    const n = String(u.note || "").trim();
+    const n = String(u.note || "").replace(/\\n/g, "\n").trim(); // AI가 줄바꿈을 글자 그대로 "\n"으로 써 놓은 경우가 있음
     if (n && n !== "새로 감지됨" && !seenN.has(n)){ seenN.add(n); notes.push({at: u.at, note: n}); }
   }
   if (!notes.length && c.why) notes.push({at: c.updated_at, note: String(c.why)});
