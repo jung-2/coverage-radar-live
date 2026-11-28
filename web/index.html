@@ -194,7 +194,7 @@
   .facts{margin:5px 0 0;padding:0;list-style:none;}
   .facts li{font-size:12.5px;line-height:1.55;padding:0 0 0 9px;border-left:2px solid var(--border);margin-bottom:var(--gap);overflow-wrap:anywhere;}
   .facts li:last-child{margin-bottom:0;}
-  .num{font-weight:600;color:var(--text);background:rgba(255,208,0,.38);border-radius:2px;padding:0 1px;font-variant-numeric:tabular-nums;}
+  .num{font-weight:600;color:var(--text);background:rgba(255,208,0,.38);border-radius:2px;padding:1px 2px;font-variant-numeric:tabular-nums;-webkit-box-decoration-break:clone;box-decoration-break:clone;}
   .excerpt{font-size:12.5px;color:var(--text);margin-top:6px;line-height:1.6;white-space:pre-line;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:7;-webkit-box-orient:vertical;overflow:hidden;}
   .link-btn{font-family:inherit;font-size:10.5px;color:var(--info);background:none;border:none;padding:0;cursor:pointer;margin-top:5px;text-align:left;}
   .link-btn:hover{text-decoration:underline;}
@@ -468,12 +468,41 @@ function fxUnits(text){
 
 // 금액·비율처럼 "값"인 숫자만 굵게(연도·날짜는 그대로 둠). 글자는 전부 안전하게 바꿔서 넣음.
 const NUM_RE = /[+\-−±]?(?:[$₩€¥£]|CNY |JPY )\s?\d[\d,]*(?:\.\d+)?(?:~\d[\d,]*(?:\.\d+)?)?(?:\s?(?:trillion|billion|million|bn|mn|tn|조|억|만))?|[+\-−±]?\d[\d,]*(?:\.\d+)?\s?(?:%p|%|bp|조|억|만|원|달러|위안|엔|유로|배|GW|MW|kWh|kW|nm|나노|톤|bn|mn)(?:\s?\d[\d,]*\s?(?:억|만|천))*(?:\s?(?:원|달러|위안|엔|유로))?/g;
-function hl(raw){
+// (2026-11-28 사용자: "하이라이트가 단어 하나마다 들어가서 이상하다, 구절 단위로") 숫자만 칠하지 않고 그 숫자가 속한 구절을 칠함:
+//  - 왼쪽으로: 그 숫자가 무엇의 숫자인지 말해 주는 앞 낱말 최대 2개(쉼표·마침표·괄호를 넘지 않음, 최대 18자)
+//  - 오른쪽으로: 바로 붙은 괄호 설명과 "미만·상회·증가" 같은 꼬리말
+//  - 가까이 붙은 구절끼리는 하나로 이음("A에서 B로", "A → B", "A vs. 예상 B")
+// 원문 글("원문 전체", 옆 패널 원문)은 글이 길어서 구절로 칠하면 온통 노래지므로 숫자만 칠함(phrase = false).
+const HL_TAIL = /^(?:\s?\([^()\n]{1,30}\))?(?:\s?(?:미만|이상|이하|초과|규모|수준|안팎|가량|상향|하향|증가|감소|상승|하락|급등|급락|상회|하회|성장|확대|축소|인상|인하|돌파|YoY|QoQ|MoM))?/;
+const HL_JOIN = /^(?:\s?(?:에서|→|->|~|-|–|vs\.?|대비|및|,)\s?(?:예상\s|컨센서스\s|전망치\s)?|\s)$/;
+function hlSpans(s, phrase){
+  const spans = [];
+  for (const m of s.matchAll(NUM_RE)){
+    let a = m.index, b = m.index + m[0].length;
+    if (phrase){
+      const before = s.slice(Math.max(0, a - 18), a);
+      const cut = Math.max(before.lastIndexOf(","), before.lastIndexOf("."), before.lastIndexOf("("), before.lastIndexOf(")"), before.lastIndexOf("\n"), before.lastIndexOf(":"), before.lastIndexOf("·"));
+      const words = before.slice(cut + 1).split(/(?<=\s)/); // 띄어쓰기를 붙인 채로 낱말 나눔
+      if (before.length === 18 && cut < 0) words.shift();     // 18자에서 잘린 반쪽 낱말은 버림
+      let leadWords = words.slice(-2);
+      if (leadWords.length && leadWords[0].trim().length <= 1) leadWords = leadWords.slice(1); // "이", "초" 같은 한 글자 조각은 안 칠함
+      const lead = leadWords.join("").replace(/^\s+/, "");
+      a -= lead.length;
+      b += (s.slice(b).match(HL_TAIL) || [""])[0].length;
+    }
+    const prev = spans[spans.length - 1];
+    if (prev && (a <= prev[1] || (phrase && HL_JOIN.test(s.slice(prev[1], a))))) prev[1] = Math.max(prev[1], b);
+    else spans.push([a, b]);
+  }
+  return spans;
+}
+function hl(raw, phrase = true){
   const s = decodeEnt(raw);
   let out = "", last = 0;
-  for (const m of s.matchAll(NUM_RE)){
-    out += esc(s.slice(last, m.index)) + `<b class="num">${esc(m[0])}</b>`;
-    last = m.index + m[0].length;
+  for (const [a, b] of hlSpans(s, phrase)){
+    if (a < last) continue;
+    out += esc(s.slice(last, a)) + `<b class="num">${esc(s.slice(a, b))}</b>`;
+    last = b;
   }
   return out + esc(s.slice(last));
 }
@@ -613,7 +642,7 @@ function eventHtml(c, groupKey){
   if (!v.notes.length && !v.facts.length){
     // 설명이 아예 없는 카드(옛 "낮음" 카드)는 원문 앞부분을 그대로 보여줌
     const first = v.sources.map(s=>tgByUrl.get(s.url)).find(Boolean);
-    if (first && first.summary) body += `<div class="excerpt">${hl(postText(String(first.summary).slice(0, 400)))}</div>`;
+    if (first && first.summary) body += `<div class="excerpt">${hl(postText(String(first.summary).slice(0, 400)), false)}</div>`;
   }
   const more = v.facts.length && v.notes.length > 1 ? ` · 설명 이력 ${v.notes.length}건` : "";
   return `
@@ -727,7 +756,7 @@ function postHtml(it, inDrawer){
     <div class="post${openPosts.has(it.url) ? " open" : ""}" data-post="${esc(it.url)}">
       <div class="post-top">${inDrawer ? "" : badge}<span class="post-ch">${esc(ch)}</span><span class="post-time">${inDrawer ? kstFullLabel(it.published_at) : kstTimeLabel(it.published_at)}</span>
         <a href="${safeUrl(it.url)}" target="_blank" rel="noopener">텔레그램에서 열기 ↗</a></div>
-      <div class="post-text">${hl(postText(it.summary || it.title || ""))}</div>
+      <div class="post-text">${hl(postText(it.summary || it.title || ""), false)}</div>
       ${into}
     </div>`;
 }
