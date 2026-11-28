@@ -316,7 +316,7 @@ function distinctDayKeys(items) {
 // 문체 규칙(2026-11-28 사용자: "옵시디언에 요청한 것처럼 말투·가독성을 올려 달라") — 리서치 볼트 CLAUDE.md의 문체 규칙을 옮김.
 // 새 글 정리와 옛 카드 다시 보기가 같이 씀. 이 규칙으로 쓴 설명에는 updates[].style = STYLE_VERSION을 붙여서,
 // 옛 말투("~했습니다")로 쓰인 오늘 카드를 rescoreOldClusters가 찾아 다시 쓰게 함. 규칙을 바꾸면 STYLE_VERSION을 올릴 것.
-const STYLE_VERSION = 3; // 3 (2026-11-28): 모음 글에서 나온 카드를 다시 볼 때 글 전체를 읽혀서 제목과 내용이 어긋났던 것을 고친 뒤 다시 쓰게 올림
+const STYLE_VERSION = 4; // 4: 다시 볼 때 카드 제목과 가장 닮은 원문을 고르게 고친 뒤 한 번 더 // 3 (2026-11-28): 모음 글에서 나온 카드를 다시 볼 때 글 전체를 읽혀서 제목과 내용이 어긋났던 것을 고친 뒤 다시 쓰게 올림
 const STYLE_RULES = `- 말투는 개조식: 줄 끝을 "~함", "~임", "~됨", "~전망", "~예정", "~상향"처럼 끊을 것. "~했습니다", "~했다", "~입니다", "~이다" 금지
 - note의 첫 줄은 결론 한 줄(무슨 일이고 방향이 어느 쪽인지). 그다음 줄부터는 그 근거(숫자·사실)를 한 줄에 하나씩. 줄은 줄바꿈으로 나누고 전체 2~5줄(low는 결론 한 줄만)
 - 한 줄에 생각 하나, 숫자는 두 개까지. 줄끼리는 원인 → 결과 → 의미 순서로 놓고 필요하면 "그래서", "반면", "다만"으로 이을 것
@@ -1178,8 +1178,16 @@ async function rescoreOldClusters(sb, apiKey) {
   if (!pending.length) return 0;
 
   // 카드마다 최근 원문 몇 개를 같이 보여줌(옛 "낮음" 카드는 설명이 아예 없어서 원문이 있어야 판단할 수 있음)
-  const pick = c => [...new Map((c.sources || []).filter(s => s && s.url).map(s => [s.url, s])).values()]
-    .sort((a, b) => (a.published_at < b.published_at ? 1 : -1)).slice(0, RESCORE_SOURCES);
+  // (2026-11-28 고침) 예전엔 글 주소로만 겹침을 빼고 최근 것 2개를 골라서, 한 모음 글에서 나온 조각이 여럿 붙은 카드는
+  // 엉뚱한 조각이 뽑혔음. 지금은 주소+제목으로 겹침을 빼고, 카드 제목과 가장 닮은 원문부터(같으면 최근 것) 고름.
+  const pick = c => {
+    const head = bigramSet(c.headline);
+    const like = s => { const got = bigramSet(s.title); let hit = 0; for (const g of head) if (got.has(g)) hit++; return head.size ? hit / head.size : 0; };
+    return [...new Map((c.sources || []).filter(s => s && s.url).map(s => [s.url + "|" + (s.title || ""), s])).values()]
+      .map(s => ({ s, like: like(s) }))
+      .sort((a, b) => (b.like - a.like) || (a.s.published_at < b.s.published_at ? 1 : -1))
+      .slice(0, RESCORE_SOURCES).map(x => x.s);
+  };
   const urls = [...new Set(pending.flatMap(c => pick(c).map(s => s.url)))];
   const textByUrl = new Map();
   if (urls.length) {
