@@ -68,7 +68,9 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const MODEL = "gemini-3.5-flash-lite";
+// (2026-11-28) 사용자 결정: 무료 등급 안에서 윗급 모델로 올림(flash-lite → flash). 무료 한도가 더 빡빡해서
+// 429(한도 초과)가 자주 나면 "gemini-3.5-flash-lite"로 되돌릴 것.
+const MODEL = "gemini-3.8-flash";
 const MAX_ITEMS = 40;               // 한 배치당 분류할 최대 신규 항목 수(비용/토큰 제한용 + 응답 길이 제한용)
                                      // (2026-09-27 150→75, 2026-10-23 75→40: 배치가 크면 응답이 길어져서 한 번에
                                      // 1~2분씩 걸리고 형식 오류도 잦았음 — 작게 끊어서 빨리빨리 여러 번 처리하는 게 나음)

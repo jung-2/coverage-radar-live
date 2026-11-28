@@ -165,7 +165,10 @@
   .toolbar input{flex:1;min-width:160px;max-width:320px;}
   .toolbar select{max-width:200px;}
   .tool-count{font-size:11px;color:var(--sub);margin-left:auto;}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:8px;align-items:start;}
+  /* (2026-11-28 사용자 지정) 한 줄에 카드 3개, 카드 줄 사이 위아래 간격 1cm. 좁은 화면에서는 2개 → 1개 */
+  .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1cm 12px;align-items:start;}
+  @media (max-width:1100px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+  @media (max-width:700px){.grid{grid-template-columns:minmax(0,1fr);}}
   .grid>.sig-group{margin-bottom:0;max-height:560px;overflow-y:auto;scrollbar-width:thin;}
   .grid>.empty{grid-column:1/-1;}
   .sig-group.low-only{background:transparent;border:1px solid var(--border);}
