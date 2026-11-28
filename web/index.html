@@ -60,13 +60,14 @@
   .empty{color:var(--sub);font-size:12px;padding:8px 0;}
 
   /* 브리핑 히어로 섹션 */
-  .hero{background:var(--block);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px;}
-  .hero-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;}
-  .hero-head button{font-size:12px;padding:7px 14px;border:none;border-radius:6px;background:var(--info);color:#fff;cursor:pointer;font-family:inherit;font-weight:600;}
+  .hero{background:var(--block);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px;}
+  .hero-head{display:flex;align-items:center;gap:12px;margin:0;}
+  .hero-head>button{margin-left:auto;flex:none;}
+  .hero-head button{font-size:12px;padding:5px 12px;border:none;border-radius:6px;background:var(--info);color:#fff;cursor:pointer;font-family:inherit;font-weight:600;}
   .hero-head button:disabled{opacity:.5;cursor:default;}
-  .brief-status{color:var(--sub);font-size:11px;min-height:14px;margin-bottom:6px;}
-  .day-group{margin-top:14px;}
-  .day-title{font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;margin-bottom:8px;}
+  .brief-status{color:var(--sub);font-size:11px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .day-group{margin-top:8px;}
+  .day-title{font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px;}
   /* '어제' 섹션 기본 접힘용(2026-09-23 추가) — .sig-low-group과 동일한 화살표 패턴 재사용 */
   .day-group-collapse{margin-top:14px;}
   .day-group-collapse summary{font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;cursor:pointer;list-style:none;margin-bottom:8px;}
@@ -74,8 +75,8 @@
   .day-group-collapse summary::before{content:"▸ ";}
   .day-group-collapse[open] summary::before{content:"▾ ";}
   /* 텔레그램/추적키워드 2탭(2026-09-23 추가, 2026-09-29 시황탭 제거) */
-  .tab-nav{display:flex;gap:4px;margin-top:10px;border-bottom:1px solid var(--border);}
-  .tab-btn{font-family:inherit;font-size:12px;font-weight:600;padding:7px 12px;border:none;background:transparent;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;}
+  .tab-nav{display:flex;gap:2px;flex:none;}
+  .tab-btn{font-family:inherit;font-size:12px;font-weight:600;padding:4px 8px;border:none;background:transparent;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;}
   .tab-btn:hover{color:var(--text);}
   .tab-btn.active{color:var(--info);border-bottom-color:var(--info);}
   .sig-row{background:var(--stat);border-radius:8px;padding:10px 12px;margin-bottom:8px;}
@@ -158,7 +159,7 @@
 
   /* ── 2026-11-28 화면 다시 짬: 넓은 화면에 카드를 격자로 여러 개씩, 카드마다 숫자 목록, 원문은 옆 패널 ── */
   .wrap{max-width:1760px;}
-  .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 2px;}
+  .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 0;padding-top:8px;border-top:1px solid var(--border);}
   .seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;}
   .seg button{font-family:inherit;font-size:11.5px;padding:5px 10px;border:none;background:var(--block);color:var(--sub);cursor:pointer;}
   .seg button+button{border-left:1px solid var(--border);}
@@ -206,9 +207,10 @@
   .link-btn{font-family:inherit;font-size:10.5px;color:var(--info);background:none;border:none;padding:0;cursor:pointer;margin-top:5px;text-align:left;}
   .link-btn:hover{text-decoration:underline;}
   .hot-score{font-size:10.5px;font-weight:600;color:var(--miss);margin-left:8px;white-space:nowrap;}
-  .hot-rows{columns:2 420px;column-gap:18px;}
+  .hot-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(6,auto);grid-auto-flow:column;column-gap:24px;}
+  @media (max-width:900px){.hot-rows{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-auto-flow:row;}}
   .hot-row{break-inside:avoid;padding:3.5mm 0;}  /* 뉴스 사이 약 7mm(위아래 3.5mm씩, 사용자 지정) */
-  .hot-row:first-child{border-top:none;}
+  .hot-row:first-child,.hot-row:nth-child(7){border-top:none;}
   .hot-time{margin-right:7px;}
   .hot-row .link-btn{font-size:13px;font-weight:700;color:inherit;margin:0;}  /* 제목은 굵게(사용자 요청) — 아래 설명과 구분 */
   .hot-key{font-weight:400;color:var(--sub);}
@@ -246,15 +248,15 @@
 
   <div class="wrap">
     <div class="hero">
+      <!-- (2026-11-28 사용자: 보드 위쪽을 컴팩트하게) 제목·탭·상태·버튼을 한 줄에 -->
       <div class="hero-head">
         <div class="sec">브리핑</div>
+        <div class="tab-nav" id="brief-tabs">
+          <button class="tab-btn active" data-tab="telegram">텔레그램</button>
+          <button class="tab-btn" data-tab="keyword">추적 키워드</button>
+        </div>
+        <div class="brief-status" id="brief-status"></div>
         <button id="brief-btn" title="5분마다 자동으로 정리됨. 지금 바로 돌리고 싶을 때만 누르면 됨">지금 업데이트</button>
-      </div>
-      <div class="brief-status" id="brief-status"></div>
-
-      <div class="tab-nav" id="brief-tabs">
-        <button class="tab-btn active" data-tab="telegram">텔레그램</button>
-        <button class="tab-btn" data-tab="keyword">추적 키워드</button>
       </div>
 
       <div class="toolbar" id="tg-toolbar">
@@ -741,7 +743,7 @@ function gridHtml(clusters, emptyMsg){
 // ── 맨 위 "지금 중요한 것"(2026-11-26 추가) ─────────────────────────
 // 오늘 중요도 "높음" 카드만 최근 갱신순으로 한 줄씩. 마지막으로 화면을 본 뒤에 새로 갱신된 건 "새" 표시.
 // 마지막으로 본 시각은 이 브라우저에만 저장(localStorage) — 화면을 떠날 때(다른 탭/닫기) 갱신함.
-const HOT_MAX = 8;
+const HOT_MAX = 12; // (2026-11-28 사용자 지정) 왼쪽 6개 · 오른쪽 6개
 const HOT_MIN_RANK = 8;
 let lastSeenAt = 0;
 try { lastSeenAt = Number(localStorage.getItem("radar_last_seen")) || 0; } catch {}
