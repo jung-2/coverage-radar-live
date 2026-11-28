@@ -195,6 +195,7 @@
   .facts li{font-size:12.5px;line-height:1.55;padding:0 0 0 9px;border-left:2px solid var(--border);margin-bottom:var(--gap);overflow-wrap:anywhere;}
   .facts li:last-child{margin-bottom:0;}
   .num{font-weight:600;color:var(--text);background:rgba(255,208,0,.38);border-radius:2px;padding:1px 2px;font-variant-numeric:tabular-nums;-webkit-box-decoration-break:clone;box-decoration-break:clone;}
+  .und{font-weight:600;color:var(--text);text-decoration:underline;text-decoration-color:var(--note);text-decoration-thickness:1.5px;text-underline-offset:3px;font-variant-numeric:tabular-nums;}
   .excerpt{font-size:12.5px;color:var(--text);margin-top:6px;line-height:1.6;white-space:pre-line;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:7;-webkit-box-orient:vertical;overflow:hidden;}
   .link-btn{font-family:inherit;font-size:10.5px;color:var(--info);background:none;border:none;padding:0;cursor:pointer;margin-top:5px;text-align:left;}
   .link-btn:hover{text-decoration:underline;}
@@ -475,6 +476,7 @@ const NUM_RE = /[+\-−±]?(?:[$₩€¥£]|CNY |JPY )\s?\d[\d,]*(?:\.\d+)?(?:~\
 // 원문 글("원문 전체", 옆 패널 원문)은 글이 길어서 구절로 칠하면 온통 노래지므로 숫자만 칠함(phrase = false).
 const HL_TAIL = /^(?:\s?\([^()\n]{1,30}\))?(?:\s?(?:미만|이상|이하|초과|규모|수준|안팎|가량|상향|하향|증가|감소|상승|하락|급등|급락|상회|하회|성장|확대|축소|인상|인하|돌파|YoY|QoQ|MoM))?/;
 const HL_JOIN = /^(?:\s?(?:에서|→|->|~|-|–|vs\.?|대비|및|,)\s?(?:예상\s|컨센서스\s|전망치\s)?|\s)$/;
+const HL_CHANGE = /→|->|에서\s?[^,.]{0,25}(?:으로|로)|vs\.?|대비|상회|하회|상향|하향|증가|감소|상승|하락|급등|급락|급증|급감|인상|인하|확대|축소|돌파|성장|둔화|YoY|QoQ|MoM|[+\-−]\s?\d/;
 function hlSpans(s, phrase){
   const spans = [];
   for (const m of s.matchAll(NUM_RE)){
@@ -501,7 +503,11 @@ function hl(raw, phrase = true){
   let out = "", last = 0;
   for (const [a, b] of hlSpans(s, phrase)){
     if (a < last) continue;
-    out += esc(s.slice(last, a)) + `<b class="num">${esc(s.slice(a, b))}</b>`;
+    // (2026-11-28 사용자: "하이라이트가 너무 많다, 밑줄이랑 나눠야") 형광펜 = 숫자가 "바뀌거나 비교되는" 구절만
+    // (A → B, A에서 B로, vs 예상·컨센서스, 대비, 상향·하향·증가·감소·급등·급락, YoY, +/-%). 그냥 값만 말한 숫자는 밑줄.
+    // 원문 글(phrase = false)은 전부 밑줄.
+    const cls = phrase && HL_CHANGE.test(s.slice(a, Math.min(s.length, b + 14))) ? "num" : "und";
+    out += esc(s.slice(last, a)) + `<b class="${cls}">${esc(s.slice(a, b))}</b>`;
     last = b;
   }
   return out + esc(s.slice(last));
