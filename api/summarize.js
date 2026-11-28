@@ -187,6 +187,20 @@ function cleanFacts(raw) {
   return out;
 }
 
+// ── 중요도 점수(2026-11-28 추가) ──────────────────────────────────
+// 사용자: "'지금 중요한 것'은 새 글이 올 때마다 밀려나니까, 여기 올라오는 건 진짜 중요해야 한다".
+// 높음/중간/낮음 세 칸으로는 "높음" 안에서 뭐가 더 중요한지 가릴 수 없어서 AI에게 1~10점을 따로 받음.
+// 화면 맨 위 상자는 최근순이 아니라 이 점수(+ 여러 채널이 같이 다뤘는지) 순으로 보여줌.
+// AI가 점수를 안 주거나 이상하게 주면 중요도에 맞춰 채움. 숫자·사실 목록이 없으면 6점까지만.
+function cleanScore(raw, impact, nFacts) {
+  let s = Number.isFinite(Number(raw)) ? Math.round(Number(raw)) : 0;
+  if (s < 1 || s > 10) s = impact === "high" ? 8 : impact === "medium" ? 5 : 2;
+  if (!nFacts) s = Math.min(s, 6);
+  if (impact === "low") s = Math.min(s, 3);
+  if (impact === "medium") s = Math.min(s, 7);
+  return s;
+}
+
 // ── 잡동사니 통 막기(2026-11-28 추가) ──────────────────────────────
 // AI가 관련 없는 글을 "기타 소식 모음" 같은 카드 하나에 계속 몰아넣어서, 글 37개가 한 카드에 묻히고
 // 설명은 마지막 글 것만 남는 일이 있었음. 이런 제목의 카드는 (1) 합칠 대상 목록에서 빼서 더 안 커지게 하고
@@ -310,7 +324,8 @@ const IMPACT_RULES = `(2026-11-28 사용자가 직접 정한 기준 — 핵심�
 - low: 새로운 의견도 숫자 변화도 없는 것 — 이미 나온 내용의 반복·재전달, 주가·지수 등락만 전하는 시황 중계, 개인 감상·잡담, 홍보·공지, 일정 안내
 - 헷갈리면 이렇게 물어볼 것: "이 글을 읽고 나서 바꿔야 할 숫자(전망·추정·가정)가 있는가?" 있으면 high 쪽, 생각은 바뀌는데 숫자는 아직이면 medium, 아무것도 안 바뀌면 low
 - 주가가 많이 올랐다/내렸다는 것만으로는 high가 아님(왜 움직였는지 새 숫자·사건이 있어야 함). 글이 길거나 유명한 사람이 썼다는 것도 이유가 안 됨
-- impact_reason에 왜 그 중요도인지 한마디로 적을 것(도구 설명의 보기 중에서 고름)`;
+- impact_reason에 왜 그 중요도인지 한마디로 적을 것(도구 설명의 보기 중에서 고름)
+- importance_score(1~10)는 엄격하게: 화면 맨 위 "지금 중요한 것"에는 점수가 높은 것 몇 개만 하루 종일 남음. 9~10점은 "산업 전체의 전망치·판도가 실제로 바뀌고 그 숫자가 원문에 있는" 일에만 주고 하루에 많아야 한두 건. 숫자·구체적 사실이 없으면 6점을 넘기지 말 것. high는 8점 이상, medium은 4~7점, low는 1~3점과 맞출 것`;
 
 const UPDATE_TOOL = {
   name: "emit_updates",
@@ -352,6 +367,10 @@ const UPDATE_TOOL = {
               enum: ["high", "medium", "low"],
               description: "이 클러스터의 중요도. 프롬프트의 [impact 규칙]대로: high = 숫자가 바뀌는 것(전망치·추정치 변경, 판도를 바꿀 이벤트, 숫자로 뒷받침된 새 의견), medium = 새 정보지만 숫자 근거가 약하거나 파급이 한 회사에 그침, low = 새 의견도 숫자 변화도 없는 반복·잡담·시황 중계",
             },
+            importance_score: {
+              type: "integer",
+              description: "중요도 점수 1~10(정수). 화면 맨 위 '지금 중요한 것'은 이 점수가 높은 순으로 몇 개만 보여주므로 엄격하게 매길 것 — 하루에 9~10점은 많아야 한두 건. 10~9: 산업 전체의 전망치·판도가 실제로 바뀌는 일이고 원문에 그걸 보여주는 구체적 숫자가 있음(시장 전망치 대폭 상향·하향, 대형 규제·관세, 업계 대표 회사의 실적 충격, 수급을 바꾸는 대형 계약·증설). 8: 숫자로 뒷받침된 새로운 의견이거나 한 산업에 뚜렷한 영향을 주는 이벤트. 7~6: 새 정보지만 파급이 한 회사에 그치거나 숫자 근거가 약함. 5~4: 이미 알려진 흐름의 재확인. 3~1: 반복·시황 중계·잡담·홍보. 숫자나 구체적 사실이 없으면 6점을 넘기지 말 것",
+            },
             impact_reason: {
               type: "string",
               description: "왜 이 중요도인지 10자 안팎 한마디. high/medium이면 다음 중 하나로: \"전망치 변경\", \"판도 이벤트\", \"새 의견+숫자\", \"실적·추정치 변경\", \"가격·수급 변화\", \"새 의견(숫자 없음)\", \"개별 회사 소식\". low면 \"반복\", \"잡담\", \"시황 중계\", \"홍보\" 등",
@@ -372,7 +391,7 @@ const UPDATE_TOOL = {
               description: "이 update에 속한 원문에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부 옮겨 적은 목록(중요도와 상관없이 채움). 예: \"3분기 매출 1,155.6억위안(+21.6% YoY), 컨센서스 1,133.7억위안 상회\", \"TP 30만원 → 35만원\", \"GPU 32만 5천 개를 월 12.5억 달러에 임대\". 숫자·단위·회사명·제품명은 원문 표기 그대로(AI5, HBM4, $3.50/kWh — 한글로 풀어 쓰지 말 것). 원문에 숫자가 있으면 하나도 빼지 말 것. 원문에 없는 숫자를 만들지 말 것. 숫자나 구체적 사실이 전혀 없는 잡담이면 빈 배열",
             },
           },
-          required: ["indices", "existing_cluster_ref", "headline", "impact", "impact_reason", "targets", "note", "facts"],
+          required: ["indices", "existing_cluster_ref", "headline", "impact", "impact_reason", "importance_score", "targets", "note", "facts"],
         },
       },
     },
@@ -831,6 +850,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
         // (2026-11-28) "높음"은 구체적 숫자·사실이 있어야 함(기준에 적힌 조건). 가벼운 모델이 명언·잡담 글을 "높음"으로
         // 올린 적이 있어서, 숫자·사실 목록이 비어 있으면 코드에서 "중간"으로 내림
         if (impact === "high" && !facts.length) impact = "medium";
+        const score = cleanScore(u.importance_score, impact, facts.length);
         const ref = Number.isInteger(u.existing_cluster_ref) ? u.existing_cluster_ref : 0;
 
         const refOriginMatches = ref >= 1 && ref <= existingClusters.length
@@ -843,11 +863,12 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
           g.facts.push(...facts);
           g.impacts.push(impact);
           if (reason && IMPACT_RANK[impact] >= IMPACT_RANK[g.reasonImpact || "low"]) { g.reason = reason; g.reasonImpact = impact; }
+          g.score = Math.max(g.score || 0, score);
         } else if (isJunkBucket(u.headline) && idxList.length > 1) {
           // 관련 없는 글을 한 통에 몰아넣으려 한 것 → 글 하나씩 따로(설명은 섞여 있어서 못 씀. 원문은 화면에서 바로 열어 볼 수 있음)
           for (const i of idxList) newEntries.push({ idxList: [i], headline: items[i - 1].title, targets: [], impact: "low", note: "", facts: [] });
         } else {
-          newEntries.push({ idxList, headline: u.headline, targets, impact, note, facts, reason });
+          newEntries.push({ idxList, headline: u.headline, targets, impact, note, facts, reason, score });
         }
       }
 
@@ -869,6 +890,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
           if (entry.note) match.note = match.note ? `${match.note}\n${entry.note}` : entry.note;
           match.facts = cleanFacts([...match.facts, ...entry.facts]);
           if (IMPACT_RANK[entry.impact] > IMPACT_RANK[match.impact]) { match.impact = entry.impact; match.reason = entry.reason; }
+          match.score = Math.max(match.score || 0, entry.score || 0);
         } else {
           mergedNewEntries.push({ ...entry, targets: [...entry.targets], facts: [...entry.facts] });
         }
@@ -901,6 +923,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
           target.facts.push(...entry.facts);
           target.impacts.push(entry.impact);
           if (entry.reason && IMPACT_RANK[entry.impact] >= IMPACT_RANK[target.reasonImpact || "low"]) { target.reason = entry.reason; target.reasonImpact = entry.impact; }
+          target.score = Math.max(target.score || 0, entry.score || 0);
         } else {
           finalNewEntries.push(entry);
         }
@@ -933,7 +956,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
         const mergedUpdates = [...(current.updates || [])];
         const mergedFacts = cleanFacts(g.facts);
         if (mergedNote || mergedFacts.length) {
-          mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, ...(mergedFacts.length ? { facts: mergedFacts } : {}), ...(g.reason ? { reason: g.reason } : {}), run_at: runAtIso });
+          mergedUpdates.push({ at: newItemsAt.toISOString(), note: mergedNote, ...(mergedFacts.length ? { facts: mergedFacts } : {}), ...(g.reason ? { reason: g.reason } : {}), ...(g.score ? { score: g.score } : {}), run_at: runAtIso });
         }
 
         const { error: updErr } = await sb
@@ -971,7 +994,7 @@ note는 모든 클러스터에서 채움. impact가 low면 무슨 내용인지 �
             targets,
             why: e.note,
             sources,
-            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", ...(e.facts.length ? { facts: e.facts } : {}), ...(e.reason ? { reason: e.reason } : {}), run_at: runAtIso }],
+            updates: [{ at: createdAt.toISOString(), note: e.note || "새로 감지됨", ...(e.facts.length ? { facts: e.facts } : {}), ...(e.reason ? { reason: e.reason } : {}), ...(e.score ? { score: e.score } : {}), run_at: runAtIso }],
             created_at: createdAt.toISOString(),
             updated_at: createdAt.toISOString(),
           };
@@ -1077,10 +1100,11 @@ const RESCORE_TOOL = {
             index: { type: "integer", description: "[카드] 목록의 번호" },
             impact: { type: "string", enum: ["high", "medium", "low"] },
             impact_reason: { type: "string", description: "왜 이 중요도인지 10자 안팎 한마디(예: \"전망치 변경\", \"판도 이벤트\", \"새 의견+숫자\", \"실적·추정치 변경\", \"가격·수급 변화\", \"새 의견(숫자 없음)\", \"개별 회사 소식\", \"반복\", \"잡담\", \"시황 중계\", \"홍보\")" },
+            importance_score: { type: "integer", description: "중요도 점수 1~10(정수). 화면 맨 위 '지금 중요한 것'은 이 점수가 높은 순으로 몇 개만 보여주므로 엄격하게 매길 것 — 하루에 9~10점은 많아야 한두 건. 10~9: 산업 전체의 전망치·판도가 실제로 바뀌는 일이고 원문에 그걸 보여주는 구체적 숫자가 있음(시장 전망치 대폭 상향·하향, 대형 규제·관세, 업계 대표 회사의 실적 충격, 수급을 바꾸는 대형 계약·증설). 8: 숫자로 뒷받침된 새로운 의견이거나 한 산업에 뚜렷한 영향을 주는 이벤트. 7~6: 새 정보지만 파급이 한 회사에 그치거나 숫자 근거가 약함. 5~4: 이미 알려진 흐름의 재확인. 3~1: 반복·시황 중계·잡담·홍보. 숫자나 구체적 사실이 없으면 6점을 넘기지 말 것" },
             note: { type: "string", description: "무슨 내용인지 1~3문장. 한글로 작성(한자 금지), 숫자는 아라비아 숫자, 영어 이름·단위는 원문 표기 그대로" },
             facts: { type: "array", items: { type: "string" }, description: "원문에 나온 숫자·구체적 사실을 한 줄에 하나씩 전부. 표기는 원문 그대로. 없으면 빈 배열" },
           },
-          required: ["index", "impact", "impact_reason", "note", "facts"],
+          required: ["index", "impact", "impact_reason", "importance_score", "note", "facts"],
         },
       },
     },
@@ -1102,7 +1126,11 @@ async function rescoreOldClusters(sb, apiKey) {
     if (dErr) throw dErr;
     c.impact = "medium";
   }
-  const pending = (rows || []).filter(c => !(c.updates || []).some(u => u && u.reason)).slice(0, RESCORE_BATCH);
+  // 다시 볼 카드: 새 기준으로 본 적 없는 카드 + 아직 점수(score)를 한 번도 안 받은 카드. 중요도 높은 것부터
+  const seenNew = c => (c.updates || []).some(u => u && u.reason);
+  const hasScore = c => (c.updates || []).some(u => u && typeof u.score === "number");
+  const pending = (rows || []).filter(c => !seenNew(c) || !hasScore(c))
+    .sort((a, b) => IMPACT_RANK[b.impact] - IMPACT_RANK[a.impact]).slice(0, RESCORE_BATCH);
   if (!pending.length) return 0;
 
   // 카드마다 최근 원문 몇 개를 같이 보여줌(옛 "낮음" 카드는 설명이 아예 없어서 원문이 있어야 판단할 수 있음)
@@ -1122,7 +1150,7 @@ async function rescoreOldClusters(sb, apiKey) {
   }).join("\n\n");
 
   const prompt = `당신은 증권사 애널리스트를 돕는 리서치 어시스턴트입니다. 아래 [카드]는 텔레그램 글을 이미 묶어서 정리해 둔 것입니다.
-카드마다 원문을 다시 읽고 중요도(impact)·이유(impact_reason)·설명(note)·숫자 목록(facts)을 새로 매겨서 rescore_cards 도구로 반환하세요.
+카드마다 원문을 다시 읽고 중요도(impact)·점수(importance_score)·이유(impact_reason)·설명(note)·숫자 목록(facts)을 새로 매겨서 rescore_cards 도구로 반환하세요.
 카드 ${pending.length}개 전부를 빠짐없이 반환할 것.
 
 [impact 규칙]
@@ -1152,7 +1180,9 @@ ${cardLines}`;
     if (impact === "high" && !facts.length) impact = "medium";
     const reason = r && typeof r.impact_reason === "string" && r.impact_reason.trim()
       ? r.impact_reason.replace(/\s+/g, " ").trim().slice(0, 30) : "다시 봄";
-    const updates = [...(c.updates || []), { at: c.updated_at, note, ...(facts.length ? { facts } : {}), reason, run_at: runAtIso, rescored: true }];
+    const hadFacts = facts.length || (c.updates || []).some(u => u && Array.isArray(u.facts) && u.facts.length);
+    const score = cleanScore(r && r.importance_score, impact, hadFacts ? 1 : 0);
+    const updates = [...(c.updates || []), { at: c.updated_at, note, ...(facts.length ? { facts } : {}), reason, score, run_at: runAtIso, rescored: true }];
     const { error: upErr } = await sb.from("clusters").update({ impact, why: note || c.why, updates }).eq("id", c.id);
     if (upErr) throw upErr;
     if (impact !== c.impact) changed++;
