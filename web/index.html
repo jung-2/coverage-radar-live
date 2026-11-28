@@ -29,13 +29,14 @@
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,'Malgun Gothic',sans-serif;font-size:14px;line-height:1.5;}
   a{color:inherit;}
-  .top{position:sticky;top:0;z-index:10;background:var(--headerbg);backdrop-filter:blur(6px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;gap:10px;}
-  .brand{font-weight:700;font-size:15px;}
-  .live-dot{width:7px;height:7px;border-radius:50%;background:var(--beat);animation:pulse 2s infinite;}
+  /* (2026-11-28 사용자: 보드 위쪽 글씨를 더 작게) 머리·메뉴·버튼은 작게, 본문(카드·지금 중요한 것)은 그대로 */
+  .top{position:sticky;top:0;z-index:10;background:var(--headerbg);backdrop-filter:blur(6px);border-bottom:1px solid var(--border);padding:7px 16px;display:flex;align-items:center;gap:8px;}
+  .brand{font-weight:700;font-size:12.5px;letter-spacing:-.01em;}
+  .live-dot{width:6px;height:6px;border-radius:50%;background:var(--beat);animation:pulse 2s infinite;}
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
-  .meta{color:var(--sub);font-size:11px;margin-left:auto;}
+  .meta{color:var(--sub);font-size:10px;margin-left:auto;}
   .wrap{max-width:920px;margin:0 auto;padding:14px 16px 60px;}
-  .sec{font-size:13px;font-weight:600;margin:0;}
+  .sec{font-size:11.5px;font-weight:700;margin:0;}
   .chips{display:flex;flex-wrap:wrap;gap:6px;}
   .chip{display:flex;align-items:center;gap:5px;background:var(--pillbg);border-radius:14px;padding:4px 10px;font-size:11px;}
   .chip button{border:none;background:none;color:var(--sub);cursor:pointer;font-size:12px;padding:0;line-height:1;}
@@ -63,11 +64,11 @@
   .hero{background:var(--block);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px;}
   .hero-head{display:flex;align-items:center;gap:12px;margin:0;}
   .hero-head>button{margin-left:auto;flex:none;}
-  #brief-btn{font-size:12px;padding:5px 12px;border:none;border-radius:6px;background:var(--info);color:#fff;cursor:pointer;font-family:inherit;font-weight:600;}
+  #brief-btn{font-size:10.5px;padding:3px 10px;border:none;border-radius:5px;background:var(--info);color:#fff;cursor:pointer;font-family:inherit;font-weight:600;}
   #brief-btn:disabled{opacity:.5;cursor:default;}
   .brief-status{color:var(--sub);font-size:11px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .day-group{margin-top:8px;}
-  .day-title{font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px;}
+  .day-title{font-size:10px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px;}
   /* '어제' 섹션 기본 접힘용(2026-09-23 추가) — .sig-low-group과 동일한 화살표 패턴 재사용 */
   .day-group-collapse{margin-top:14px;}
   .day-group-collapse summary{font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;cursor:pointer;list-style:none;margin-bottom:8px;}
@@ -76,7 +77,7 @@
   .day-group-collapse[open] summary::before{content:"▾ ";}
   /* 텔레그램/추적키워드 2탭(2026-09-23 추가, 2026-09-29 시황탭 제거) */
   .tab-nav{display:flex;gap:2px;flex:none;}
-  .tab-btn{font-family:inherit;font-size:12px;font-weight:600;padding:4px 8px;border:none;background:transparent;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;}
+  .tab-btn{font-family:inherit;font-size:11px;font-weight:600;padding:3px 7px;border:none;background:transparent;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;}
   .tab-btn:hover{color:var(--text);}
   .tab-btn.active{color:var(--info);border-bottom-color:var(--info);}
   .sig-row{background:var(--stat);border-radius:8px;padding:10px 12px;margin-bottom:8px;}
@@ -159,15 +160,15 @@
 
   /* ── 2026-11-28 화면 다시 짬: 넓은 화면에 카드를 격자로 여러 개씩, 카드마다 숫자 목록, 원문은 옆 패널 ── */
   .wrap{max-width:1760px;}
-  .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 0;padding-top:8px;border-top:1px solid var(--border);}
+  .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin:6px 0 0;padding-top:6px;border-top:1px solid var(--border);}
   .seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;}
-  .seg button{font-family:inherit;font-size:11.5px;padding:5px 10px;border:none;background:var(--block);color:var(--sub);cursor:pointer;}
+  .seg button{font-family:inherit;font-size:10.5px;padding:3px 8px;border:none;background:var(--block);color:var(--sub);cursor:pointer;}
   .seg button+button{border-left:1px solid var(--border);}
   .seg button.on{background:var(--info);color:#fff;font-weight:600;}
-  .toolbar input,.toolbar select{font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--block);color:var(--text);}
+  .toolbar input,.toolbar select{font-family:inherit;font-size:10.5px;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--block);color:var(--text);}
   .toolbar input{flex:1;min-width:160px;max-width:320px;}
   .toolbar select{max-width:200px;}
-  .tool-count{font-size:11px;color:var(--sub);margin-left:auto;}
+  .tool-count{font-size:10px;color:var(--sub);margin-left:auto;}
   /* (2026-11-28 사용자 지정) 한 줄에 카드 3개, 카드 줄 사이 위아래 간격 1cm. 좁은 화면에서는 2개 → 1개 */
   .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1cm 12px;align-items:start;}
   @media (max-width:1100px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
