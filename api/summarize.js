@@ -394,7 +394,7 @@ const TELEGRAM_SPLIT_TOOL = {
 // 도구(function) 하나를 반드시 호출하게 강제해서(mode: ANY) 구조화된 JSON 결과만 받음 — Claude 때의 tool_choice와 같은 역할.
 // 반환값: { args(도구 입력값 객체, 없으면 null), finishReason }
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
-// 후보 모델을 순서대로 써 봄: 없는 모델(404)이거나 한도 초과(429)면 다음 모델로. 마지막 후보의 오류는 그대로 던짐.
+// 후보 모델을 순서대로 써 봄: 없는 모델(404), 한도 초과(429), 서버가 바쁨(503 등)이면 다음 모델로. 마지막 후보의 오류는 그대로 던짐.
 let modelCandidates = null; // 이번 실행에서 쓸 후보(처음 AI를 부를 때 한 번만 정함)
 let modelDb = null;
 async function callGemini(apiKey, tool, prompt, maxTokens) {
@@ -408,7 +408,8 @@ async function callGemini(apiKey, tool, prompt, maxTokens) {
       lastModelUsed = order[i];
       return out;
     } catch (err) {
-      const skippable = err.status === 404 || err.status === 429;
+      // (2026-11-28) 503("지금 이 모델에 요청이 몰림")도 다음 모델로 넘김 — 새 flash 모델이 503만 계속 내서 배포 직후 요약이 통째로 멈췄었음
+      const skippable = [404, 429, 500, 502, 503, 504].includes(err.status);
       if (!skippable || i === order.length - 1) throw err;
       modelCooldown.set(order[i], Date.now() + MODEL_COOLDOWN_MS);
       console.error(`${order[i]} 사용 불가(${err.status}) — ${order[i + 1]}(으)로 넘어감`);
